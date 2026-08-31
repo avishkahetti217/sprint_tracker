@@ -1,7 +1,7 @@
 const path = require('path');
 const express = require('express');
 const db = require('./db');
-const { toDateKey, computeSprintForDate } = require('./sprint-math');
+const { toDateKey, parseDateKey, computeSprintForDate } = require('./sprint-math');
 
 const app = express();
 const PORT = process.env.PORT || 4100;
@@ -41,13 +41,57 @@ function totalSeconds(tasks) {
   return tasks.reduce((sum, t) => sum + (t.duration_seconds || 0), 0);
 }
 
-// GET a day (creating it + its sprint on first access), with its tasks.
+function goalsForDay(dayId) {
+  return db.prepare('SELECT * FROM goals WHERE day_id = ? ORDER BY position').all(dayId);
+}
+
+const MAX_GOALS_PER_DAY = 3;
+
+// GET a day (creating it + its sprint on first access), with its tasks and goals.
 app.get('/api/day', (req, res) => {
   const dateKey = req.query.date || toDateKey(new Date());
   const day = getOrCreateDay(dateKey);
   const sprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(day.sprint_id);
   const tasks = tasksForDay(day.id);
-  res.json({ day, sprint, tasks, totalSeconds: totalSeconds(tasks) });
+  const goals = goalsForDay(day.id);
+  res.json({ day, sprint, tasks, totalSeconds: totalSeconds(tasks), goals });
+});
+
+// Add a goal to a day (max 3).
+app.post('/api/days/:dayId/goals', (req, res) => {
+  const dayId = Number(req.params.dayId);
+  const day = db.prepare('SELECT * FROM days WHERE id = ?').get(dayId);
+  if (!day) return res.status(404).json({ error: 'day not found' });
+
+  const text = (req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'text is required' });
+
+  const existing = goalsForDay(dayId);
+  if (existing.length >= MAX_GOALS_PER_DAY) {
+    return res.status(400).json({ error: `a day can have at most ${MAX_GOALS_PER_DAY} goals` });
+  }
+
+  const position = existing.length ? Math.max(...existing.map((g) => g.position)) + 1 : 1;
+  const info = db
+    .prepare('INSERT INTO goals (day_id, text, done, position) VALUES (?, ?, 0, ?)')
+    .run(dayId, text, position);
+
+  res.status(201).json(db.prepare('SELECT * FROM goals WHERE id = ?').get(info.lastInsertRowid));
+});
+
+// Toggle a goal done/not-done.
+app.patch('/api/goals/:id', (req, res) => {
+  const goal = db.prepare('SELECT * FROM goals WHERE id = ?').get(req.params.id);
+  if (!goal) return res.status(404).json({ error: 'not found' });
+
+  const done = req.body.done !== undefined ? (req.body.done ? 1 : 0) : goal.done;
+  db.prepare('UPDATE goals SET done = ? WHERE id = ?').run(done, goal.id);
+  res.json(db.prepare('SELECT * FROM goals WHERE id = ?').get(goal.id));
+});
+
+app.delete('/api/goals/:id', (req, res) => {
+  db.prepare('DELETE FROM goals WHERE id = ?').run(req.params.id);
+  res.status(204).end();
 });
 
 // Add a task to a day.
@@ -156,6 +200,52 @@ app.get('/api/sprints', (req, res) => {
   });
 
   res.json(result);
+});
+
+function enumerateDateKeys(startKey, endKey) {
+  const keys = [];
+  let cursor = parseDateKey(startKey);
+  const end = parseDateKey(endKey);
+  while (cursor <= end) {
+    keys.push(toDateKey(cursor));
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return keys;
+}
+
+// Hours worked per day over an arbitrary date range, for the Statistics chart.
+app.get('/api/stats', (req, res) => {
+  const start = req.query.start;
+  const end = req.query.end;
+  if (!start || !end) return res.status(400).json({ error: 'start and end query params are required' });
+  if (start > end) return res.status(400).json({ error: 'start must not be after end' });
+
+  const rows = db
+    .prepare(
+      `SELECT d.date as date, COALESCE(SUM(t.duration_seconds), 0) as totalSeconds
+       FROM days d LEFT JOIN tasks t ON t.day_id = d.id
+       WHERE d.date BETWEEN ? AND ?
+       GROUP BY d.date`
+    )
+    .all(start, end);
+  const totalsByDate = new Map(rows.map((r) => [r.date, r.totalSeconds]));
+
+  const days = enumerateDateKeys(start, end).map((date) => ({
+    date,
+    totalSeconds: totalsByDate.get(date) || 0,
+  }));
+
+  const totalSecondsSum = days.reduce((sum, d) => sum + d.totalSeconds, 0);
+  const workedDays = days.filter((d) => d.totalSeconds > 0);
+
+  res.json({
+    start,
+    end,
+    days,
+    totalSeconds: totalSecondsSum,
+    workedDayCount: workedDays.length,
+    averageSecondsPerWorkedDay: workedDays.length ? Math.round(totalSecondsSum / workedDays.length) : 0,
+  });
 });
 
 function csvEscape(value) {

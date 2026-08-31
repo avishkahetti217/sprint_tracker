@@ -33,6 +33,14 @@ db.exec(`
     duration_seconds INTEGER,
     status TEXT NOT NULL DEFAULT 'open'
   );
+
+  CREATE TABLE IF NOT EXISTS goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day_id INTEGER NOT NULL REFERENCES days(id),
+    text TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL
+  );
 `);
 
 module.exports = db;

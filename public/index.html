@@ -12,6 +12,7 @@
     <nav>
       <button id="tab-today" class="tab active" data-tab="today">Today</button>
       <button id="tab-sprints" class="tab" data-tab="sprints">Sprints</button>
+      <button id="tab-stats" class="tab" data-tab="stats">Statistics</button>
     </nav>
   </header>
 
@@ -21,6 +22,15 @@
         <input type="date" id="date-picker" />
         <div id="sprint-badge" class="sprint-badge"></div>
         <div id="day-total" class="day-total"></div>
+      </div>
+
+      <div class="goals-panel">
+        <h3>Goals for the day</h3>
+        <ul id="goals-list" class="goals-list"></ul>
+        <form id="add-goal-form" class="add-goal-form">
+          <input type="text" id="goal-text" placeholder="Add a goal (max 3)" />
+          <button type="submit">Add goal</button>
+        </form>
       </div>
 
       <ul id="task-list" class="task-list"></ul>
@@ -38,6 +48,22 @@
         <button id="export-csv-btn" disabled>Download CSV</button>
       </div>
       <div id="sprint-list"></div>
+    </section>
+
+    <section id="view-stats" class="view">
+      <div class="stats-toolbar">
+        <label>From <input type="date" id="stats-start" /></label>
+        <label>To <input type="date" id="stats-end" /></label>
+        <div class="stats-presets">
+          <button type="button" data-preset="sprint">This Sprint</button>
+          <button type="button" data-preset="7">Last 7 Days</button>
+          <button type="button" data-preset="30">Last 30 Days</button>
+        </div>
+      </div>
+
+      <div class="stats-summary" id="stats-summary"></div>
+
+      <div id="stats-chart" class="stats-chart"></div>
     </section>
   </main>
 

@@ -3,12 +3,15 @@ const state = {
   selectedSprints: new Set(),
 };
 
-function todayKey() {
-  const d = new Date();
+function toDateKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function todayKey() {
+  return toDateKey(new Date());
 }
 
 function formatDuration(seconds) {
@@ -51,6 +54,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     btn.classList.add('active');
     document.getElementById(`view-${btn.dataset.tab}`).classList.add('active');
     if (btn.dataset.tab === 'sprints') loadSprints();
+    if (btn.dataset.tab === 'stats') initStats();
   });
 });
 
@@ -75,6 +79,8 @@ function renderDay(data) {
     `Sprint ${data.sprint.sprint_number} (${data.sprint.start_date} → ${data.sprint.end_date})`;
   document.getElementById('day-total').textContent = `Total: ${formatDuration(data.totalSeconds) || '0m'}`;
 
+  renderGoals(data.goals);
+
   const list = document.getElementById('task-list');
   list.innerHTML = '';
 
@@ -90,6 +96,64 @@ function renderDay(data) {
     list.appendChild(renderTaskItem(task, { showCompleteButton: true, showDeleteButton: true, onChange: loadDay }))
   );
 }
+
+function renderGoals(goals) {
+  const list = document.getElementById('goals-list');
+  list.innerHTML = '';
+
+  goals.forEach((goal) => {
+    const li = document.createElement('li');
+    li.className = 'goal-item' + (goal.done ? ' done' : '');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !!goal.done;
+    checkbox.addEventListener('change', async () => {
+      await fetch(`/api/goals/${goal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done: checkbox.checked }),
+      });
+      loadDay();
+    });
+    li.appendChild(checkbox);
+
+    const text = document.createElement('span');
+    text.className = 'goal-text';
+    text.textContent = goal.text;
+    li.appendChild(text);
+
+    const del = document.createElement('button');
+    del.className = 'btn-delete';
+    del.textContent = '×';
+    del.title = 'Delete';
+    del.addEventListener('click', async () => {
+      await fetch(`/api/goals/${goal.id}`, { method: 'DELETE' });
+      loadDay();
+    });
+    li.appendChild(del);
+
+    list.appendChild(li);
+  });
+
+  document.getElementById('add-goal-form').style.display = goals.length >= 3 ? 'none' : 'flex';
+}
+
+document.getElementById('add-goal-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('goal-text');
+  const text = input.value.trim();
+  if (!text) return;
+
+  await fetch(`/api/days/${state.dayId}/goals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+
+  input.value = '';
+  loadDay();
+});
 
 // Shared task row used by both the Today view and the Sprints view.
 // opts: { showCompleteButton, showDeleteButton, onChange }
@@ -338,6 +402,139 @@ function renderDayBlock(day) {
   }
 
   return block;
+}
+
+// ---------- Statistics view ----------
+
+let statsInitialized = false;
+
+async function initStats() {
+  if (!statsInitialized) {
+    statsInitialized = true;
+    await setStatsPreset('sprint');
+  } else {
+    loadStats();
+  }
+}
+
+document.getElementById('stats-start').addEventListener('change', loadStats);
+document.getElementById('stats-end').addEventListener('change', loadStats);
+
+document.querySelectorAll('.stats-presets button').forEach((btn) => {
+  btn.addEventListener('click', () => setStatsPreset(btn.dataset.preset));
+});
+
+async function setStatsPreset(preset) {
+  const todayISO = todayKey();
+  let startKey = todayISO;
+  let endKey = todayISO;
+
+  if (preset === 'sprint') {
+    const res = await fetch(`/api/day?date=${todayISO}`);
+    const data = await res.json();
+    startKey = data.sprint.start_date;
+    endKey = data.sprint.end_date;
+  } else {
+    const days = Number(preset);
+    const end = new Date();
+    const start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+    startKey = toDateKey(start);
+    endKey = toDateKey(end);
+  }
+
+  document.getElementById('stats-start').value = startKey;
+  document.getElementById('stats-end').value = endKey;
+  loadStats();
+}
+
+async function loadStats() {
+  const start = document.getElementById('stats-start').value;
+  const end = document.getElementById('stats-end').value;
+  if (!start || !end) return;
+
+  const res = await fetch(`/api/stats?start=${start}&end=${end}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  renderStatsSummary(data);
+  renderStatsChart(data);
+}
+
+function renderStatsSummary(data) {
+  const summary = document.getElementById('stats-summary');
+  summary.innerHTML = '';
+
+  const stats = [
+    { label: 'Total hours', value: formatDuration(data.totalSeconds) || '0m' },
+    { label: 'Days worked', value: String(data.workedDayCount) },
+    { label: 'Avg / worked day', value: formatDuration(data.averageSecondsPerWorkedDay) || '0m' },
+  ];
+
+  stats.forEach((s) => {
+    const box = document.createElement('div');
+    box.className = 'stats-stat';
+    box.innerHTML = `<div class="value">${s.value}</div><div class="label">${s.label}</div>`;
+    summary.appendChild(box);
+  });
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function renderStatsChart(data) {
+  const container = document.getElementById('stats-chart');
+  container.innerHTML = '';
+
+  if (data.days.length === 0) {
+    container.innerHTML = '<div class="empty-state">No days in this range.</div>';
+    return;
+  }
+
+  const barWidth = 24;
+  const gap = 10;
+  const maxBarHeight = 160;
+  const topPadding = 10;
+  const labelHeight = 30;
+  const width = data.days.length * (barWidth + gap) + gap;
+  const height = topPadding + maxBarHeight + labelHeight;
+
+  const maxHours = Math.max(1, ...data.days.map((d) => d.totalSeconds / 3600));
+  const labelStep = Math.max(1, Math.ceil(data.days.length / 15));
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  data.days.forEach((day, i) => {
+    const hours = day.totalSeconds / 3600;
+    const barHeight = (hours / maxHours) * maxBarHeight;
+    const x = gap + i * (barWidth + gap);
+    const y = topPadding + (maxBarHeight - barHeight);
+
+    const rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('class', 'stats-bar');
+    rect.setAttribute('x', x);
+    rect.setAttribute('y', y);
+    rect.setAttribute('width', barWidth);
+    rect.setAttribute('height', Math.max(barHeight, hours > 0 ? 2 : 0));
+    rect.setAttribute('rx', 3);
+
+    const title = document.createElementNS(SVG_NS, 'title');
+    title.textContent = `${day.date}: ${formatDuration(day.totalSeconds) || '0m'}`;
+    rect.appendChild(title);
+    svg.appendChild(rect);
+
+    if (i % labelStep === 0) {
+      const label = document.createElementNS(SVG_NS, 'text');
+      label.setAttribute('class', 'stats-bar-label');
+      label.setAttribute('x', x + barWidth / 2);
+      label.setAttribute('y', topPadding + maxBarHeight + 14);
+      label.setAttribute('text-anchor', 'middle');
+      label.textContent = day.date.slice(5).replace('-', '/');
+      svg.appendChild(label);
+    }
+  });
+
+  container.appendChild(svg);
 }
 
 // ---------- Init ----------
