@@ -383,13 +383,17 @@ function renderDayBlock(day) {
   const header = document.createElement('div');
   header.className = 'day-block-header';
   header.innerHTML = `<span class="date">${formatDateLabel(day.date)}</span><span>${formatDuration(day.totalSeconds) || '0m'}</span>`;
+  header.addEventListener('click', () => block.classList.toggle('open'));
   block.appendChild(header);
+
+  const content = document.createElement('div');
+  content.className = 'day-block-content';
 
   if (day.tasks.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     empty.textContent = 'No tasks.';
-    block.appendChild(empty);
+    content.appendChild(empty);
   } else {
     const list = document.createElement('ul');
     list.className = 'task-list';
@@ -398,8 +402,10 @@ function renderDayBlock(day) {
         renderTaskItem(task, { showCompleteButton: false, showDeleteButton: false, onChange: loadSprints })
       )
     );
-    block.appendChild(list);
+    content.appendChild(list);
   }
+
+  block.appendChild(content);
 
   return block;
 }

@@ -237,10 +237,14 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   justify-content: space-between;
   font-size: 13px;
   color: var(--muted);
-  margin-bottom: 6px;
+  cursor: pointer;
+  user-select: none;
 }
 
 .day-block-header .date { font-weight: 600; color: var(--text); }
+
+.day-block-content { display: none; margin-top: 8px; }
+.day-block.open .day-block-content { display: block; }
 
 .empty-state { color: var(--muted); font-size: 14px; padding: 24px 0; text-align: center; }
 
