@@ -1,0 +1,15 @@
+{
+  "name": "sprint-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Daily task tracker grouped into two-week (Mon-Fri) sprints",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.21.0"
+  }
+}

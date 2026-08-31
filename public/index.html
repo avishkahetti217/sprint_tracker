@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sprint Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Sprint Tracker</h1>
+    <nav>
+      <button id="tab-today" class="tab active" data-tab="today">Today</button>
+      <button id="tab-sprints" class="tab" data-tab="sprints">Sprints</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="view-today" class="view active">
+      <div class="day-header">
+        <input type="date" id="date-picker" />
+        <div id="sprint-badge" class="sprint-badge"></div>
+        <div id="day-total" class="day-total"></div>
+      </div>
+
+      <ul id="task-list" class="task-list"></ul>
+
+      <form id="add-task-form" class="add-task-form">
+        <input type="text" id="task-description" placeholder="What are you working on?" required />
+        <input type="text" id="task-comment" placeholder="Comment (optional)" />
+        <button type="submit">Add task</button>
+      </form>
+    </section>
+
+    <section id="view-sprints" class="view">
+      <div class="sprint-toolbar">
+        <span id="export-hint">Select sprints below to export</span>
+        <button id="export-csv-btn" disabled>Download CSV</button>
+      </div>
+      <div id="sprint-list"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
