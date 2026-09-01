@@ -76,6 +76,7 @@ async function loadDay() {
   const data = await res.json();
   state.dayId = data.day.id;
   renderDay(data);
+  return data;
 }
 
 function renderDay(data) {
@@ -113,12 +114,16 @@ function renderGoals(goals) {
     checkbox.type = 'checkbox';
     checkbox.checked = !!goal.done;
     checkbox.addEventListener('change', async () => {
+      const justCompleted = checkbox.checked;
       await fetch(`/api/goals/${goal.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ done: checkbox.checked }),
       });
-      loadDay();
+      const data = await loadDay();
+      if (justCompleted && data.goals.length > 0 && data.goals.every((g) => g.done)) {
+        celebrateGoalsComplete();
+      }
     });
     li.appendChild(checkbox);
 
@@ -141,6 +146,31 @@ function renderGoals(goals) {
   });
 
   document.getElementById('add-goal-form').style.display = goals.length >= 3 ? 'none' : 'flex';
+
+  const allDone = goals.length > 0 && goals.every((g) => g.done);
+  document.getElementById('goals-complete-badge').hidden = !allDone;
+}
+
+const CONFETTI_COLORS = ['#3b5bdb', '#f59f00', '#2f9e44', '#e64980', '#7048e8', '#1c7ed6'];
+
+function celebrateGoalsComplete() {
+  const container = document.createElement('div');
+  container.className = 'confetti-container';
+  document.body.appendChild(container);
+
+  const pieceCount = 120;
+  for (let i = 0; i < pieceCount; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.left = `${Math.random() * 100}vw`;
+    piece.style.backgroundColor = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+    piece.style.setProperty('--sway', `${Math.random() * 120 - 60}px`);
+    piece.style.animationDuration = `${2.2 + Math.random() * 1.4}s`;
+    piece.style.animationDelay = `${Math.random() * 0.4}s`;
+    container.appendChild(piece);
+  }
+
+  setTimeout(() => container.remove(), 4000);
 }
 
 document.getElementById('add-goal-form').addEventListener('submit', async (e) => {
