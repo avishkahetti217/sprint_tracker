@@ -3,6 +3,46 @@ const state = {
   selectedSprints: new Set(),
 };
 
+// ---------- Theme ----------
+
+const THEME_KEY = 'sprint-tracker-theme';
+
+function readStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredTheme(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // Storage unavailable (private browsing, blocked cookies, etc.) — theme just won't persist.
+  }
+}
+
+function isDarkActive() {
+  const explicit = document.documentElement.getAttribute('data-theme');
+  if (explicit) return explicit === 'dark';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function applyTheme(theme) {
+  if (theme) document.documentElement.setAttribute('data-theme', theme);
+  else document.documentElement.removeAttribute('data-theme');
+  document.getElementById('theme-toggle').textContent = isDarkActive() ? '☀️' : '🌙';
+}
+
+applyTheme(readStoredTheme());
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const next = isDarkActive() ? 'light' : 'dark';
+  writeStoredTheme(next);
+  applyTheme(next);
+});
+
 function toDateKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -98,7 +138,9 @@ function renderDay(data) {
   }
 
   data.tasks.forEach((task) =>
-    list.appendChild(renderTaskItem(task, { showCompleteButton: true, showDeleteButton: true, onChange: loadDay }))
+    list.appendChild(
+      renderTaskItem(task, { showCompleteButton: true, showEditButton: true, showDeleteButton: true, onChange: loadDay })
+    )
   );
 }
 
@@ -190,7 +232,7 @@ document.getElementById('add-goal-form').addEventListener('submit', async (e) =>
 });
 
 // Shared task row used by both the Today view and the Sprints view.
-// opts: { showCompleteButton, showDeleteButton, onChange }
+// opts: { showCompleteButton, showEditButton, showDeleteButton, onChange }
 function renderTaskItem(task, opts) {
   opts = opts || {};
   const li = document.createElement('li');
@@ -227,12 +269,14 @@ function renderTaskItem(task, opts) {
     }
   }
 
-  const editBtn = document.createElement('button');
-  editBtn.className = 'btn-edit';
-  editBtn.textContent = '✎';
-  editBtn.title = 'Edit task';
-  editBtn.addEventListener('click', () => toggleEditTimesForm(li, task, opts.onChange));
-  row.appendChild(editBtn);
+  if (opts.showEditButton) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-edit';
+    editBtn.textContent = '✎';
+    editBtn.title = 'Edit task';
+    editBtn.addEventListener('click', () => toggleEditTimesForm(li, task, opts.onChange));
+    row.appendChild(editBtn);
+  }
 
   if (opts.showDeleteButton) {
     const del = document.createElement('button');
