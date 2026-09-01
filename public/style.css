@@ -314,6 +314,9 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   font-size: 13px;
 }
 
+.edit-field-wide { flex: 1 1 180px; }
+.edit-field-wide input { width: 100%; }
+
 .edit-times-form button {
   border: none;
   padding: 6px 12px;

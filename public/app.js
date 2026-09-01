@@ -37,6 +37,10 @@ function formatDateLabel(dateKey) {
   });
 }
 
+function escapeAttr(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
 // Converts an ISO timestamp to the "YYYY-MM-DDTHH:mm" format datetime-local inputs need.
 function toLocalInputValue(iso) {
   if (!iso) return '';
@@ -196,7 +200,7 @@ function renderTaskItem(task, opts) {
   const editBtn = document.createElement('button');
   editBtn.className = 'btn-edit';
   editBtn.textContent = '✎';
-  editBtn.title = 'Edit start/end time';
+  editBtn.title = 'Edit task';
   editBtn.addEventListener('click', () => toggleEditTimesForm(li, task, opts.onChange));
   row.appendChild(editBtn);
 
@@ -234,6 +238,8 @@ function toggleEditTimesForm(li, task, onChange) {
   const form = document.createElement('form');
   form.className = 'edit-times-form';
   form.innerHTML = `
+    <label class="edit-field-wide">Name<input type="text" name="description" value="${escapeAttr(task.description)}" required /></label>
+    <label class="edit-field-wide">Comment<input type="text" name="comment" value="${escapeAttr(task.comment || '')}" /></label>
     <label>Start<input type="datetime-local" name="start" value="${toLocalInputValue(task.start_time)}" required /></label>
     <label>End<input type="datetime-local" name="end" value="${toLocalInputValue(task.end_time)}" /></label>
     <button type="submit">Save</button>
@@ -245,11 +251,26 @@ function toggleEditTimesForm(li, task, onChange) {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const description = form.elements.description.value.trim();
+    const comment = form.elements.comment.value.trim();
     const startValue = form.elements.start.value;
     const endValue = form.elements.end.value;
-    if (!startValue) return;
+    if (!description || !startValue) return;
 
-    const res = await fetch(`/api/tasks/${task.id}/times`, {
+    const errorBox = form.querySelector('.edit-error');
+
+    const detailsRes = await fetch(`/api/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, comment }),
+    });
+    if (!detailsRes.ok) {
+      const err = await detailsRes.json().catch(() => ({ error: 'Failed to save' }));
+      errorBox.textContent = err.error || 'Failed to save';
+      return;
+    }
+
+    const timesRes = await fetch(`/api/tasks/${task.id}/times`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -257,10 +278,9 @@ function toggleEditTimesForm(li, task, onChange) {
         end_time: endValue ? new Date(endValue).toISOString() : null,
       }),
     });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Failed to save' }));
-      form.querySelector('.edit-error').textContent = err.error || 'Failed to save';
+    if (!timesRes.ok) {
+      const err = await timesRes.json().catch(() => ({ error: 'Failed to save' }));
+      errorBox.textContent = err.error || 'Failed to save';
       return;
     }
 
