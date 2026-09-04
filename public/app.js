@@ -1,7 +1,59 @@
 const state = {
   dateKey: todayKey(),
   selectedSprints: new Set(),
+  taskCategories: [],
+  noteCategories: [],
 };
+
+const NOTE_CATEGORY_COLORS = {
+  Challenges: '#fa5252',
+  Achievements: '#12b886',
+  Mistakes: '#f59f00',
+  Learnings: '#1c7ed6',
+};
+
+function noteCategoryColor(category) {
+  return NOTE_CATEGORY_COLORS[category] || '#868e96';
+}
+
+const CATEGORY_COLORS = {
+  Research: '#1c7ed6',
+  'Story writing': '#7048e8',
+  Demo: '#f59f00',
+  'Sanity testing': '#12b886',
+  Presentations: '#e64980',
+  Meetings: '#fa5252',
+  Adhoc: '#82c91e',
+  Support: '#15aabf',
+  Uncategorized: '#868e96',
+};
+
+function categoryColor(category) {
+  return CATEGORY_COLORS[category] || CATEGORY_COLORS.Uncategorized;
+}
+
+// ---------- Task categories ----------
+
+async function loadTaskCategories() {
+  const res = await fetch('/api/task-categories');
+  state.taskCategories = await res.json();
+  populateCategorySelect(document.getElementById('task-category'), '');
+}
+
+function categoryOptionsHtml(selected) {
+  const options = ['<option value="">No category</option>'];
+  state.taskCategories.forEach((c) => {
+    const sel = c === selected ? ' selected' : '';
+    options.push(`<option value="${escapeAttr(c)}"${sel}>${escapeAttr(c)}</option>`);
+  });
+  return options.join('');
+}
+
+function populateCategorySelect(selectEl, selected) {
+  selectEl.innerHTML = categoryOptionsHtml(selected);
+}
+
+loadTaskCategories();
 
 // ---------- Theme ----------
 
@@ -81,12 +133,20 @@ function escapeAttr(str) {
   return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-// Converts an ISO timestamp to the "YYYY-MM-DDTHH:mm" format datetime-local inputs need.
-function toLocalInputValue(iso) {
+// Converts an ISO timestamp to the "HH:mm" format time inputs need.
+function toLocalTimeInputValue(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Builds a Date using referenceIso's calendar day and an "HH:mm" time-of-day —
+// tasks always start and end on the day they were created, so only the time is editable.
+function combineDateAndTime(referenceIso, timeStr) {
+  const ref = new Date(referenceIso);
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return new Date(ref.getFullYear(), ref.getMonth(), ref.getDate(), hours, minutes);
 }
 
 // ---------- Tabs ----------
@@ -99,6 +159,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     document.getElementById(`view-${btn.dataset.tab}`).classList.add('active');
     if (btn.dataset.tab === 'sprints') loadSprints();
     if (btn.dataset.tab === 'stats') initStats();
+    if (btn.dataset.tab === 'notes') initNotes();
   });
 });
 
@@ -246,6 +307,17 @@ function renderTaskItem(task, opts) {
   desc.textContent = task.description;
   row.appendChild(desc);
 
+  if (task.category) {
+    const category = document.createElement('span');
+    category.className = 'task-category-badge';
+    category.textContent = task.category;
+    const color = categoryColor(task.category);
+    category.style.color = color;
+    category.style.borderColor = `color-mix(in srgb, ${color} 45%, var(--border))`;
+    category.style.background = `color-mix(in srgb, ${color} 15%, var(--card))`;
+    row.appendChild(category);
+  }
+
   if (task.status === 'done') {
     const status = document.createElement('span');
     status.className = 'task-status-done';
@@ -313,9 +385,10 @@ function toggleEditTimesForm(li, task, onChange) {
   form.className = 'edit-times-form';
   form.innerHTML = `
     <label class="edit-field-wide">Name<input type="text" name="description" value="${escapeAttr(task.description)}" required /></label>
+    <label>Category<select name="category">${categoryOptionsHtml(task.category)}</select></label>
     <label class="edit-field-wide">Comment<input type="text" name="comment" value="${escapeAttr(task.comment || '')}" /></label>
-    <label>Start<input type="datetime-local" name="start" value="${toLocalInputValue(task.start_time)}" required /></label>
-    <label>End<input type="datetime-local" name="end" value="${toLocalInputValue(task.end_time)}" /></label>
+    <label>Start<input type="time" name="start" value="${toLocalTimeInputValue(task.start_time)}" required /></label>
+    <label>End<input type="time" name="end" value="${toLocalTimeInputValue(task.end_time)}" /></label>
     <button type="submit">Save</button>
     <button type="button" class="cancel">Cancel</button>
     <div class="edit-error"></div>
@@ -326,6 +399,7 @@ function toggleEditTimesForm(li, task, onChange) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const description = form.elements.description.value.trim();
+    const category = form.elements.category.value || null;
     const comment = form.elements.comment.value.trim();
     const startValue = form.elements.start.value;
     const endValue = form.elements.end.value;
@@ -336,7 +410,7 @@ function toggleEditTimesForm(li, task, onChange) {
     const detailsRes = await fetch(`/api/tasks/${task.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description, comment }),
+      body: JSON.stringify({ description, comment, category }),
     });
     if (!detailsRes.ok) {
       const err = await detailsRes.json().catch(() => ({ error: 'Failed to save' }));
@@ -348,8 +422,8 @@ function toggleEditTimesForm(li, task, onChange) {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        start_time: new Date(startValue).toISOString(),
-        end_time: endValue ? new Date(endValue).toISOString() : null,
+        start_time: combineDateAndTime(task.start_time, startValue).toISOString(),
+        end_time: endValue ? combineDateAndTime(task.start_time, endValue).toISOString() : null,
       }),
     });
     if (!timesRes.ok) {
@@ -374,18 +448,21 @@ async function deleteTask(id) {
 
 document.getElementById('add-task-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const categorySelect = document.getElementById('task-category');
   const description = document.getElementById('task-description').value.trim();
   const comment = document.getElementById('task-comment').value.trim();
+  const category = categorySelect.value || null;
   if (!description) return;
 
   await fetch(`/api/days/${state.dayId}/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ description, comment }),
+    body: JSON.stringify({ description, comment, category }),
   });
 
   document.getElementById('task-description').value = '';
   document.getElementById('task-comment').value = '';
+  categorySelect.value = '';
   loadDay();
 });
 
@@ -529,8 +606,12 @@ async function setStatsPreset(preset) {
   let startKey = todayISO;
   let endKey = todayISO;
 
-  if (preset === 'sprint') {
-    const res = await fetch(`/api/day?date=${todayISO}`);
+  if (preset === 'sprint' || preset === 'lastSprint') {
+    // Sprints are fixed 14-day blocks, so a date 14 days before today always
+    // falls in the immediately preceding sprint — ask the server for its range.
+    const anchorDate =
+      preset === 'lastSprint' ? toDateKey(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)) : todayISO;
+    const res = await fetch(`/api/day?date=${anchorDate}`);
     const data = await res.json();
     startKey = data.sprint.start_date;
     endKey = data.sprint.end_date;
@@ -556,7 +637,51 @@ async function loadStats() {
   if (!res.ok) return;
   const data = await res.json();
   renderStatsSummary(data);
-  renderStatsChart(data);
+  renderStatsCategories(data);
+}
+
+function renderStatsCategories(data) {
+  const container = document.getElementById('stats-categories');
+  container.innerHTML = '';
+
+  if (!data.categories || data.categories.length === 0) {
+    container.innerHTML = '<div class="empty-state">No completed tasks in this range.</div>';
+    return;
+  }
+
+  const maxSeconds = Math.max(...data.categories.map((c) => c.totalSeconds));
+
+  data.categories.forEach((c) => {
+    const row = document.createElement('div');
+    row.className = 'stats-category-row';
+
+    const color = categoryColor(c.category);
+
+    const name = document.createElement('div');
+    name.className = 'stats-category-name';
+    const dot = document.createElement('span');
+    dot.className = 'stats-category-dot';
+    dot.style.background = color;
+    name.appendChild(dot);
+    name.appendChild(document.createTextNode(c.category));
+    row.appendChild(name);
+
+    const track = document.createElement('div');
+    track.className = 'stats-category-bar-track';
+    const fill = document.createElement('div');
+    fill.className = 'stats-category-bar-fill';
+    fill.style.width = `${maxSeconds ? (c.totalSeconds / maxSeconds) * 100 : 0}%`;
+    fill.style.background = color;
+    track.appendChild(fill);
+    row.appendChild(track);
+
+    const value = document.createElement('div');
+    value.className = 'stats-category-value';
+    value.textContent = formatDuration(c.totalSeconds) || '0m';
+    row.appendChild(value);
+
+    container.appendChild(row);
+  });
 }
 
 function renderStatsSummary(data) {
@@ -566,7 +691,6 @@ function renderStatsSummary(data) {
   const stats = [
     { label: 'Total hours', value: formatDuration(data.totalSeconds) || '0m' },
     { label: 'Days worked', value: String(data.workedDayCount) },
-    { label: 'Avg / worked day', value: formatDuration(data.averageSecondsPerWorkedDay) || '0m' },
   ];
 
   stats.forEach((s) => {
@@ -577,65 +701,174 @@ function renderStatsSummary(data) {
   });
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
+// ---------- Notes ----------
 
-function renderStatsChart(data) {
-  const container = document.getElementById('stats-chart');
+let notesInitialized = false;
+
+async function initNotes() {
+  if (!notesInitialized) {
+    notesInitialized = true;
+    const res = await fetch('/api/note-categories');
+    state.noteCategories = await res.json();
+    document.getElementById('note-category').innerHTML = noteCategoryOptionsHtml(state.noteCategories[0]);
+
+    const monthInput = document.getElementById('notes-month');
+    if (!monthInput.value) monthInput.value = state.dateKey.slice(0, 7);
+    const dateInput = document.getElementById('note-date');
+    if (!dateInput.value) dateInput.value = state.dateKey;
+  }
+  loadNotes();
+}
+
+document.getElementById('notes-month').addEventListener('change', loadNotes);
+
+function noteCategoryOptionsHtml(selected) {
+  return state.noteCategories
+    .map((c) => `<option value="${escapeAttr(c)}"${c === selected ? ' selected' : ''}>${escapeAttr(c)}</option>`)
+    .join('');
+}
+
+async function loadNotes() {
+  const month = document.getElementById('notes-month').value;
+  if (!month) return;
+
+  const res = await fetch(`/api/notes?month=${month}`);
+  if (!res.ok) return;
+  renderNotesGroups(await res.json());
+}
+
+function renderNotesGroups(notes) {
+  const container = document.getElementById('notes-groups');
   container.innerHTML = '';
 
-  if (data.days.length === 0) {
-    container.innerHTML = '<div class="empty-state">No days in this range.</div>';
+  state.noteCategories.forEach((category) => {
+    const group = document.createElement('div');
+    group.className = 'notes-category-group';
+
+    const heading = document.createElement('h3');
+    const dot = document.createElement('span');
+    dot.className = 'notes-category-dot';
+    dot.style.background = noteCategoryColor(category);
+    heading.appendChild(dot);
+    heading.appendChild(document.createTextNode(category));
+    group.appendChild(heading);
+
+    const entries = notes.filter((n) => n.category === category);
+    if (entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No entries this month.';
+      group.appendChild(empty);
+    } else {
+      entries.forEach((note) => group.appendChild(renderNoteItem(note)));
+    }
+
+    container.appendChild(group);
+  });
+}
+
+function renderNoteItem(note) {
+  const item = document.createElement('div');
+  item.className = 'note-item';
+
+  const date = document.createElement('div');
+  date.className = 'note-date';
+  date.textContent = formatDateLabel(note.date);
+  item.appendChild(date);
+
+  const text = document.createElement('div');
+  text.className = 'note-text';
+  text.textContent = note.text;
+  item.appendChild(text);
+
+  const actions = document.createElement('div');
+  actions.className = 'note-actions';
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'btn-edit';
+  editBtn.textContent = '✎';
+  editBtn.title = 'Edit note';
+  editBtn.addEventListener('click', () => toggleEditNoteForm(item, note));
+  actions.appendChild(editBtn);
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn-delete';
+  delBtn.textContent = '×';
+  delBtn.title = 'Delete';
+  delBtn.addEventListener('click', async () => {
+    await fetch(`/api/notes/${note.id}`, { method: 'DELETE' });
+    loadNotes();
+  });
+  actions.appendChild(delBtn);
+
+  item.appendChild(actions);
+  return item;
+}
+
+function toggleEditNoteForm(item, note) {
+  const existing = item.querySelector('.edit-note-form');
+  if (existing) {
+    existing.remove();
     return;
   }
 
-  const barWidth = 24;
-  const gap = 10;
-  const maxBarHeight = 160;
-  const topPadding = 10;
-  const labelHeight = 30;
-  const width = data.days.length * (barWidth + gap) + gap;
-  const height = topPadding + maxBarHeight + labelHeight;
+  const form = document.createElement('form');
+  form.className = 'edit-note-form';
+  form.innerHTML = `
+    <input type="date" name="date" value="${escapeAttr(note.date)}" required />
+    <select name="category">${noteCategoryOptionsHtml(note.category)}</select>
+    <textarea name="text" required>${escapeAttr(note.text)}</textarea>
+    <button type="submit">Save</button>
+    <button type="button" class="cancel">Cancel</button>
+    <div class="edit-error"></div>
+  `;
 
-  const maxHours = Math.max(1, ...data.days.map((d) => d.totalSeconds / 3600));
-  const labelStep = Math.max(1, Math.ceil(data.days.length / 15));
+  form.querySelector('.cancel').addEventListener('click', () => form.remove());
 
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const date = form.elements.date.value;
+    const category = form.elements.category.value;
+    const text = form.elements.text.value.trim();
+    if (!date || !text) return;
 
-  data.days.forEach((day, i) => {
-    const hours = day.totalSeconds / 3600;
-    const barHeight = (hours / maxHours) * maxBarHeight;
-    const x = gap + i * (barWidth + gap);
-    const y = topPadding + (maxBarHeight - barHeight);
+    const res = await fetch(`/api/notes/${note.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, category, text }),
+    });
 
-    const rect = document.createElementNS(SVG_NS, 'rect');
-    rect.setAttribute('class', 'stats-bar');
-    rect.setAttribute('x', x);
-    rect.setAttribute('y', y);
-    rect.setAttribute('width', barWidth);
-    rect.setAttribute('height', Math.max(barHeight, hours > 0 ? 2 : 0));
-    rect.setAttribute('rx', 3);
-
-    const title = document.createElementNS(SVG_NS, 'title');
-    title.textContent = `${day.date}: ${formatDuration(day.totalSeconds) || '0m'}`;
-    rect.appendChild(title);
-    svg.appendChild(rect);
-
-    if (i % labelStep === 0) {
-      const label = document.createElementNS(SVG_NS, 'text');
-      label.setAttribute('class', 'stats-bar-label');
-      label.setAttribute('x', x + barWidth / 2);
-      label.setAttribute('y', topPadding + maxBarHeight + 14);
-      label.setAttribute('text-anchor', 'middle');
-      label.textContent = day.date.slice(5).replace('-', '/');
-      svg.appendChild(label);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to save' }));
+      form.querySelector('.edit-error').textContent = err.error || 'Failed to save';
+      return;
     }
+
+    loadNotes();
   });
 
-  container.appendChild(svg);
+  item.appendChild(form);
 }
+
+document.getElementById('add-note-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const date = document.getElementById('note-date').value;
+  const category = document.getElementById('note-category').value;
+  const textInput = document.getElementById('note-text');
+  const text = textInput.value.trim();
+  if (!date || !category || !text) return;
+
+  const res = await fetch('/api/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, category, text }),
+  });
+
+  if (res.ok) {
+    textInput.value = '';
+    loadNotes();
+  }
+});
 
 // ---------- Init ----------
 

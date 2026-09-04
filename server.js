@@ -3,6 +3,19 @@ const express = require('express');
 const db = require('./db');
 const { toDateKey, parseDateKey, computeSprintForDate } = require('./sprint-math');
 
+const TASK_CATEGORIES = [
+  'Research',
+  'Story writing',
+  'Demo',
+  'Sanity testing',
+  'Presentations',
+  'Meetings',
+  'Adhoc',
+  'Support',
+];
+
+const NOTE_CATEGORIES = ['Challenges', 'Achievements', 'Mistakes', 'Learnings'];
+
 const app = express();
 const PORT = process.env.PORT || 4100;
 
@@ -95,6 +108,10 @@ app.delete('/api/goals/:id', (req, res) => {
 });
 
 // Add a task to a day.
+app.get('/api/task-categories', (req, res) => {
+  res.json(TASK_CATEGORIES);
+});
+
 app.post('/api/days/:dayId/tasks', (req, res) => {
   const dayId = Number(req.params.dayId);
   const day = db.prepare('SELECT * FROM days WHERE id = ?').get(dayId);
@@ -104,11 +121,16 @@ app.post('/api/days/:dayId/tasks', (req, res) => {
   if (!description) return res.status(400).json({ error: 'description is required' });
   const comment = (req.body.comment || '').trim() || null;
 
+  const category = (req.body.category || '').trim() || null;
+  if (category && !TASK_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'invalid category' });
+  }
+
   const info = db
     .prepare(
-      "INSERT INTO tasks (day_id, description, comment, start_time, status) VALUES (?, ?, ?, ?, 'open')"
+      "INSERT INTO tasks (day_id, description, comment, category, start_time, status) VALUES (?, ?, ?, ?, ?, 'open')"
     )
-    .run(dayId, description, comment, new Date().toISOString());
+    .run(dayId, description, comment, category, new Date().toISOString());
 
   res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
 });
@@ -162,7 +184,7 @@ app.patch('/api/tasks/:id/times', (req, res) => {
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id));
 });
 
-// Edit a task's description/comment.
+// Edit a task's description/comment/category.
 app.patch('/api/tasks/:id', (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
@@ -171,10 +193,17 @@ app.patch('/api/tasks/:id', (req, res) => {
     req.body.description !== undefined ? req.body.description.trim() : task.description;
   const comment =
     req.body.comment !== undefined ? req.body.comment.trim() || null : task.comment;
+  const category =
+    req.body.category !== undefined ? req.body.category.trim() || null : task.category;
 
-  db.prepare('UPDATE tasks SET description = ?, comment = ? WHERE id = ?').run(
+  if (category && !TASK_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'invalid category' });
+  }
+
+  db.prepare('UPDATE tasks SET description = ?, comment = ?, category = ? WHERE id = ?').run(
     description,
     comment,
+    category,
     task.id
   );
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id));
@@ -213,7 +242,7 @@ function enumerateDateKeys(startKey, endKey) {
   return keys;
 }
 
-// Hours worked per day over an arbitrary date range, for the Statistics chart.
+// Hours worked over an arbitrary date range, plus a per-category breakdown, for the Statistics view.
 app.get('/api/stats', (req, res) => {
   const start = req.query.start;
   const end = req.query.end;
@@ -238,13 +267,23 @@ app.get('/api/stats', (req, res) => {
   const totalSecondsSum = days.reduce((sum, d) => sum + d.totalSeconds, 0);
   const workedDays = days.filter((d) => d.totalSeconds > 0);
 
+  const categoryRows = db
+    .prepare(
+      `SELECT COALESCE(t.category, 'Uncategorized') as category, SUM(t.duration_seconds) as totalSeconds
+       FROM days d JOIN tasks t ON t.day_id = d.id
+       WHERE d.date BETWEEN ? AND ? AND t.duration_seconds IS NOT NULL
+       GROUP BY category
+       ORDER BY totalSeconds DESC`
+    )
+    .all(start, end);
+
   res.json({
     start,
     end,
     days,
     totalSeconds: totalSecondsSum,
     workedDayCount: workedDays.length,
-    averageSecondsPerWorkedDay: workedDays.length ? Math.round(totalSecondsSum / workedDays.length) : 0,
+    categories: categoryRows,
   });
 });
 
@@ -275,7 +314,7 @@ app.get('/api/sprints/export', (req, res) => {
     .all(...numbers);
 
   const rows = [
-    ['Sprint', 'Sprint Start', 'Sprint End', 'Date', 'Task', 'Comment', 'Start Time', 'End Time', 'Duration (h:mm)', 'Status'],
+    ['Sprint', 'Sprint Start', 'Sprint End', 'Date', 'Task', 'Category', 'Comment', 'Start Time', 'End Time', 'Duration (h:mm)', 'Status'],
   ];
 
   for (const sprint of sprints) {
@@ -283,7 +322,7 @@ app.get('/api/sprints/export', (req, res) => {
     for (const day of days) {
       const tasks = tasksForDay(day.id);
       if (tasks.length === 0) {
-        rows.push([sprint.sprint_number, sprint.start_date, sprint.end_date, day.date, '', '', '', '', '', '']);
+        rows.push([sprint.sprint_number, sprint.start_date, sprint.end_date, day.date, '', '', '', '', '', '', '']);
         continue;
       }
       for (const task of tasks) {
@@ -293,6 +332,7 @@ app.get('/api/sprints/export', (req, res) => {
           sprint.end_date,
           day.date,
           task.description,
+          task.category || '',
           task.comment || '',
           task.start_time,
           task.end_time || '',
@@ -307,6 +347,65 @@ app.get('/api/sprints/export', (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="sprints-${numbers.join('-')}.csv"`);
   res.send(csv);
+});
+
+// ---------- Monthly notes ----------
+
+app.get('/api/note-categories', (req, res) => {
+  res.json(NOTE_CATEGORIES);
+});
+
+app.get('/api/notes', (req, res) => {
+  const month = req.query.month;
+  if (!/^\d{4}-\d{2}$/.test(month || '')) {
+    return res.status(400).json({ error: 'month query param is required (YYYY-MM)' });
+  }
+  const notes = db
+    .prepare("SELECT * FROM notes WHERE date LIKE ? ORDER BY date, id")
+    .all(`${month}-%`);
+  res.json(notes);
+});
+
+app.post('/api/notes', (req, res) => {
+  const date = req.body.date;
+  const category = req.body.category;
+  const text = (req.body.text || '').trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'invalid date' });
+  if (!NOTE_CATEGORIES.includes(category)) return res.status(400).json({ error: 'invalid category' });
+  if (!text) return res.status(400).json({ error: 'text is required' });
+
+  const info = db
+    .prepare('INSERT INTO notes (date, category, text, created_at) VALUES (?, ?, ?, ?)')
+    .run(date, category, text, new Date().toISOString());
+
+  res.status(201).json(db.prepare('SELECT * FROM notes WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.patch('/api/notes/:id', (req, res) => {
+  const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(req.params.id);
+  if (!note) return res.status(404).json({ error: 'not found' });
+
+  const date = req.body.date !== undefined ? req.body.date : note.date;
+  const category = req.body.category !== undefined ? req.body.category : note.category;
+  const text = req.body.text !== undefined ? req.body.text.trim() : note.text;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'invalid date' });
+  if (!NOTE_CATEGORIES.includes(category)) return res.status(400).json({ error: 'invalid category' });
+  if (!text) return res.status(400).json({ error: 'text is required' });
+
+  db.prepare('UPDATE notes SET date = ?, category = ?, text = ? WHERE id = ?').run(
+    date,
+    category,
+    text,
+    note.id
+  );
+  res.json(db.prepare('SELECT * FROM notes WHERE id = ?').get(note.id));
+});
+
+app.delete('/api/notes/:id', (req, res) => {
+  db.prepare('DELETE FROM notes WHERE id = ?').run(req.params.id);
+  res.status(204).end();
 });
 
 app.listen(PORT, () => {

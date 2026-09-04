@@ -41,6 +41,20 @@ db.exec(`
     done INTEGER NOT NULL DEFAULT 0,
     position INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    category TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
 `);
+
+// Migration: `category` was added to tasks after the initial release.
+const taskColumns = db.prepare('PRAGMA table_info(tasks)').all().map((c) => c.name);
+if (!taskColumns.includes('category')) {
+  db.exec('ALTER TABLE tasks ADD COLUMN category TEXT');
+}
 
 module.exports = db;

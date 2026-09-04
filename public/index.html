@@ -14,6 +14,7 @@
         <button id="tab-today" class="tab active" data-tab="today">Today</button>
         <button id="tab-sprints" class="tab" data-tab="sprints">Sprints</button>
         <button id="tab-stats" class="tab" data-tab="stats">Statistics</button>
+        <button id="tab-notes" class="tab" data-tab="notes">Notes</button>
       </nav>
       <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle dark mode">🌙</button>
     </div>
@@ -40,6 +41,7 @@
 
       <form id="add-task-form" class="add-task-form">
         <input type="text" id="task-description" placeholder="What are you working on?" required />
+        <select id="task-category" class="task-category-select"></select>
         <input type="text" id="task-comment" placeholder="Comment (optional)" />
         <button type="submit">Add task</button>
       </form>
@@ -59,6 +61,7 @@
         <label>To <input type="date" id="stats-end" /></label>
         <div class="stats-presets">
           <button type="button" data-preset="sprint">This Sprint</button>
+          <button type="button" data-preset="lastSprint">Last Sprint</button>
           <button type="button" data-preset="7">Last 7 Days</button>
           <button type="button" data-preset="30">Last 30 Days</button>
         </div>
@@ -66,7 +69,23 @@
 
       <div class="stats-summary" id="stats-summary"></div>
 
-      <div id="stats-chart" class="stats-chart"></div>
+      <h3 class="stats-section-title">Time by category</h3>
+      <div id="stats-categories" class="stats-categories"></div>
+    </section>
+
+    <section id="view-notes" class="view">
+      <div class="notes-toolbar">
+        <label>Month <input type="month" id="notes-month" /></label>
+      </div>
+
+      <form id="add-note-form" class="add-note-form">
+        <input type="date" id="note-date" required />
+        <select id="note-category"></select>
+        <textarea id="note-text" placeholder="What happened?" required></textarea>
+        <button type="submit">Add note</button>
+      </form>
+
+      <div id="notes-groups"></div>
     </section>
   </main>
 
