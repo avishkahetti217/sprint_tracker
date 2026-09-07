@@ -1,5 +1,7 @@
+require('dotenv').config();
 const path = require('path');
 const express = require('express');
+const ical = require('node-ical');
 const db = require('./db');
 const { toDateKey, parseDateKey, computeSprintForDate } = require('./sprint-math');
 
@@ -407,6 +409,126 @@ app.delete('/api/notes/:id', (req, res) => {
   db.prepare('DELETE FROM notes WHERE id = ?').run(req.params.id);
   res.status(204).end();
 });
+
+// ---------- Google Calendar sync ----------
+//
+// Reads GOOGLE_CALENDAR_ICS_URL (a private "secret address in iCal format" from
+// Google Calendar settings — see .env.example) and pulls it on a timer so the
+// client never waits on Google; it just reads whatever was cached last.
+
+const CALENDAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+let calendarCache = { data: null, fetchedAt: null, error: null };
+
+async function refreshCalendarCache() {
+  const icsUrl = process.env.GOOGLE_CALENDAR_ICS_URL;
+  if (!icsUrl) {
+    calendarCache = { data: null, fetchedAt: null, error: 'GOOGLE_CALENDAR_ICS_URL is not configured (see .env.example)' };
+    return;
+  }
+  try {
+    const data = await ical.async.fromURL(icsUrl);
+    calendarCache = { data, fetchedAt: new Date().toISOString(), error: null };
+  } catch (err) {
+    calendarCache = { ...calendarCache, error: err.message || 'Failed to fetch calendar' };
+  }
+}
+
+function calendarEventsForDate(dateKey) {
+  if (!calendarCache.data) return [];
+
+  const dayStart = parseDateKey(dateKey);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+  const events = [];
+
+  for (const key of Object.keys(calendarCache.data)) {
+    const item = calendarCache.data[key];
+    if (item.type !== 'VEVENT') continue;
+
+    if (item.rrule) {
+      // Recurring event: expand just the occurrences that fall on this day.
+      // Each occurrence gets its own stable id (series uid + its own start time).
+      const durationMs = new Date(item.end).getTime() - new Date(item.start).getTime();
+      const occurrences = item.rrule.between(dayStart, dayEnd, true);
+      occurrences.forEach((occStart) => {
+        events.push({
+          uid: `${item.uid}::${occStart.toISOString()}`,
+          title: item.summary || '(no title)',
+          start: occStart.toISOString(),
+          end: new Date(occStart.getTime() + durationMs).toISOString(),
+          allDay: item.datetype === 'date',
+        });
+      });
+    } else {
+      const start = new Date(item.start);
+      const end = new Date(item.end || item.start);
+      if (start < dayEnd && end > dayStart) {
+        events.push({
+          uid: item.uid,
+          title: item.summary || '(no title)',
+          start: start.toISOString(),
+          end: end.toISOString(),
+          allDay: item.datetype === 'date',
+        });
+      }
+    }
+  }
+
+  events.sort((a, b) => new Date(a.start) - new Date(b.start));
+  return events;
+}
+
+// Creates a 'Meetings' task for each timed calendar event that doesn't already
+// have one on this day (matched by calendar_uid), so meetings count toward the
+// day's logged hours automatically. All-day events (holidays, reminders) are
+// skipped — they aren't real time spent.
+function importCalendarEventsAsTasks(dateKey, events) {
+  const timedEvents = events.filter((ev) => !ev.allDay);
+  if (timedEvents.length === 0) return;
+
+  const day = getOrCreateDay(dateKey);
+  const existingUids = new Set(
+    db
+      .prepare('SELECT calendar_uid FROM tasks WHERE day_id = ? AND calendar_uid IS NOT NULL')
+      .all(day.id)
+      .map((r) => r.calendar_uid)
+  );
+
+  const insert = db.prepare(
+    `INSERT INTO tasks (day_id, description, category, calendar_uid, start_time, end_time, duration_seconds, status)
+     VALUES (?, ?, 'Meetings', ?, ?, ?, ?, 'done')`
+  );
+
+  for (const ev of timedEvents) {
+    if (existingUids.has(ev.uid)) continue;
+    const durationSeconds = Math.max(0, Math.round((new Date(ev.end) - new Date(ev.start)) / 1000));
+    insert.run(day.id, ev.title, ev.uid, ev.start, ev.end, durationSeconds);
+  }
+}
+
+app.get('/api/calendar/day', (req, res) => {
+  const dateKey = req.query.date || toDateKey(new Date());
+  if (calendarCache.error && !calendarCache.data) {
+    return res.status(502).json({ error: calendarCache.error });
+  }
+  const events = calendarEventsForDate(dateKey);
+  importCalendarEventsAsTasks(dateKey, events);
+  res.json({ date: dateKey, events, fetchedAt: calendarCache.fetchedAt });
+});
+
+// On-demand refresh, for a manual "refresh now" affordance in the UI.
+app.post('/api/calendar/refresh', async (req, res) => {
+  await refreshCalendarCache();
+  const dateKey = req.query.date || toDateKey(new Date());
+  if (calendarCache.error && !calendarCache.data) {
+    return res.status(502).json({ error: calendarCache.error });
+  }
+  const events = calendarEventsForDate(dateKey);
+  importCalendarEventsAsTasks(dateKey, events);
+  res.json({ date: dateKey, events, fetchedAt: calendarCache.fetchedAt });
+});
+
+refreshCalendarCache();
+setInterval(refreshCalendarCache, CALENDAR_REFRESH_INTERVAL_MS);
 
 app.listen(PORT, () => {
   console.log(`sprint-tracker running at http://localhost:${PORT}`);

@@ -172,11 +172,17 @@ datePicker.addEventListener('change', () => {
   loadDay();
 });
 
-async function loadDay() {
+async function loadDayData() {
   const res = await fetch(`/api/day?date=${state.dateKey}`);
   const data = await res.json();
   state.dayId = data.day.id;
   renderDay(data);
+  return data;
+}
+
+async function loadDay() {
+  const data = await loadDayData();
+  loadCalendarEvents();
   return data;
 }
 
@@ -291,6 +297,74 @@ document.getElementById('add-goal-form').addEventListener('submit', async (e) =>
   input.value = '';
   loadDay();
 });
+
+// ---------- Calendar ----------
+//
+// Auto-loads with the day and refreshes itself in the background — the server
+// pulls Google Calendar on its own timer, this just reads whatever it cached.
+
+async function loadCalendarEvents() {
+  const res = await fetch(`/api/calendar/day?date=${state.dateKey}`);
+  const data = await res.json();
+  if (!res.ok) {
+    renderCalendarError(data.error || 'Failed to load calendar');
+    return;
+  }
+  renderCalendarEvents(data.events, data.fetchedAt);
+  // Meetings may have just been imported as tasks server-side — refresh the list.
+  loadDayData();
+}
+
+function renderCalendarError(message) {
+  document.getElementById('calendar-events-list').innerHTML = `<li class="empty-state">${escapeAttr(message)}</li>`;
+  document.getElementById('calendar-updated').textContent = '';
+}
+
+function renderCalendarEvents(events, fetchedAt) {
+  const list = document.getElementById('calendar-events-list');
+  list.innerHTML = '';
+
+  if (events.length === 0) {
+    list.innerHTML = '<li class="empty-state">No meetings today.</li>';
+  } else {
+    events.forEach((ev) => {
+      const li = document.createElement('li');
+      li.className = 'calendar-event-item';
+
+      const time = document.createElement('span');
+      time.className = 'calendar-event-time';
+      time.textContent = ev.allDay ? 'All day' : `${formatTime(ev.start)} – ${formatTime(ev.end)}`;
+      li.appendChild(time);
+
+      const title = document.createElement('span');
+      title.textContent = ev.title;
+      li.appendChild(title);
+
+      list.appendChild(li);
+    });
+  }
+
+  document.getElementById('calendar-updated').textContent = fetchedAt ? `Updated ${formatTime(fetchedAt)}` : '';
+}
+
+document.getElementById('refresh-calendar-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('refresh-calendar-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/calendar/refresh?date=${state.dateKey}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      renderCalendarError(data.error || 'Failed to refresh calendar');
+    } else {
+      renderCalendarEvents(data.events, data.fetchedAt);
+      loadDayData();
+    }
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+setInterval(loadCalendarEvents, 5 * 60 * 1000);
 
 // Shared task row used by both the Today view and the Sprints view.
 // opts: { showCompleteButton, showEditButton, showDeleteButton, onChange }

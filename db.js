@@ -51,10 +51,13 @@ db.exec(`
   );
 `);
 
-// Migration: `category` was added to tasks after the initial release.
+// Migrations: columns added to tasks after the initial release.
 const taskColumns = db.prepare('PRAGMA table_info(tasks)').all().map((c) => c.name);
 if (!taskColumns.includes('category')) {
   db.exec('ALTER TABLE tasks ADD COLUMN category TEXT');
+}
+if (!taskColumns.includes('calendar_uid')) {
+  db.exec('ALTER TABLE tasks ADD COLUMN calendar_uid TEXT');
 }
 
 module.exports = db;
