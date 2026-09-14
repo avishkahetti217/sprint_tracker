@@ -2,19 +2,7 @@ const state = {
   dateKey: todayKey(),
   selectedSprints: new Set(),
   taskCategories: [],
-  noteCategories: [],
 };
-
-const NOTE_CATEGORY_COLORS = {
-  Challenges: '#fa5252',
-  Achievements: '#12b886',
-  Mistakes: '#f59f00',
-  Learnings: '#1c7ed6',
-};
-
-function noteCategoryColor(category) {
-  return NOTE_CATEGORY_COLORS[category] || '#868e96';
-}
 
 const CATEGORY_COLORS = {
   Research: '#1c7ed6',
@@ -32,12 +20,36 @@ function categoryColor(category) {
   return CATEGORY_COLORS[category] || CATEGORY_COLORS.Uncategorized;
 }
 
+// Keyword hints used to auto-suggest a category while typing a task
+// description. Checked in this order — first match wins.
+const CATEGORY_KEYWORDS = {
+  Research: ['research', 'analysis', 'analyse', 'analyze', 'investigat', 'explor'],
+  'Story writing': ['user story', 'user stories', 'story writing', 'writing the story', 'backlog item'],
+  Demo: ['demo'],
+  'Sanity testing': ['sanity test', 'sanity check', 'testing', 'qa ', 'bug fix', 'verify'],
+  Presentations: ['presentation', 'slide', 'slides', 'deck'],
+  Meetings: ['meeting', 'call with', 'sync up', 'standup', 'stand-up', 'huddle', '1:1', '1-1', 'catch up', 'catchup'],
+  Adhoc: ['adhoc', 'ad-hoc', 'ad hoc'],
+  Support: ['support', 'ticket', 'help desk'],
+};
+
+function guessCategoryFromText(text) {
+  const lower = text.toLowerCase();
+  for (const category of state.taskCategories) {
+    const keywords = CATEGORY_KEYWORDS[category] || [];
+    if (keywords.some((kw) => lower.includes(kw))) return category;
+  }
+  return null;
+}
+
 // ---------- Task categories ----------
+
+const DEFAULT_TASK_CATEGORY = 'Adhoc';
 
 async function loadTaskCategories() {
   const res = await fetch('/api/task-categories');
   state.taskCategories = await res.json();
-  populateCategorySelect(document.getElementById('task-category'), '');
+  populateCategorySelect(document.getElementById('task-category'), DEFAULT_TASK_CATEGORY);
 }
 
 function categoryOptionsHtml(selected) {
@@ -159,7 +171,8 @@ document.querySelectorAll('.tab').forEach((btn) => {
     document.getElementById(`view-${btn.dataset.tab}`).classList.add('active');
     if (btn.dataset.tab === 'sprints') loadSprints();
     if (btn.dataset.tab === 'stats') initStats();
-    if (btn.dataset.tab === 'notes') initNotes();
+    if (btn.dataset.tab === 'notes') initNotesTab();
+    if (btn.dataset.tab === 'integrations') loadIntegrationStatus();
   });
 });
 
@@ -187,8 +200,10 @@ async function loadDay() {
 }
 
 function renderDay(data) {
-  document.getElementById('sprint-badge').textContent =
-    `Sprint ${data.sprint.sprint_number} (${data.sprint.start_date} → ${data.sprint.end_date})`;
+  const sprintLabel = data.sprint.sprint_number
+    ? `Sprint ${data.sprint.sprint_number} · ${data.sprint.start_date} → ${data.sprint.end_date}`
+    : `${data.sprint.start_date} → ${data.sprint.end_date}`;
+  document.getElementById('sprint-badge').textContent = sprintLabel;
   document.getElementById('day-total').textContent = `Total: ${formatDuration(data.totalSeconds) || '0m'}`;
 
   renderGoals(data.goals);
@@ -520,6 +535,19 @@ async function deleteTask(id) {
   await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
 }
 
+// Once the user picks a category themselves, stop auto-suggesting for this entry.
+let taskCategoryTouchedByUser = false;
+
+document.getElementById('task-category').addEventListener('change', () => {
+  taskCategoryTouchedByUser = true;
+});
+
+document.getElementById('task-description').addEventListener('input', (e) => {
+  if (taskCategoryTouchedByUser) return;
+  const guess = guessCategoryFromText(e.target.value);
+  if (guess) document.getElementById('task-category').value = guess;
+});
+
 document.getElementById('add-task-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const categorySelect = document.getElementById('task-category');
@@ -536,7 +564,8 @@ document.getElementById('add-task-form').addEventListener('submit', async (e) =>
 
   document.getElementById('task-description').value = '';
   document.getElementById('task-comment').value = '';
-  categorySelect.value = '';
+  categorySelect.value = DEFAULT_TASK_CATEGORY;
+  taskCategoryTouchedByUser = false;
   loadDay();
 });
 
@@ -567,8 +596,8 @@ function updateExportButton() {
 
 document.getElementById('export-csv-btn').addEventListener('click', () => {
   if (state.selectedSprints.size === 0) return;
-  const numbers = [...state.selectedSprints].sort((a, b) => a - b).join(',');
-  window.location.href = `/api/sprints/export?numbers=${numbers}`;
+  const ids = [...state.selectedSprints].sort((a, b) => a - b).join(',');
+  window.location.href = `/api/sprints/export?ids=${ids}`;
 });
 
 function renderSprintCard(sprint) {
@@ -581,24 +610,35 @@ function renderSprintCard(sprint) {
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.className = 'sprint-select';
-  checkbox.checked = state.selectedSprints.has(sprint.sprint_number);
+  checkbox.checked = state.selectedSprints.has(sprint.id);
   checkbox.addEventListener('click', (e) => e.stopPropagation());
   checkbox.addEventListener('change', () => {
-    if (checkbox.checked) state.selectedSprints.add(sprint.sprint_number);
-    else state.selectedSprints.delete(sprint.sprint_number);
+    if (checkbox.checked) state.selectedSprints.add(sprint.id);
+    else state.selectedSprints.delete(sprint.id);
     updateExportButton();
   });
   summary.appendChild(checkbox);
 
   const title = document.createElement('span');
   title.className = 'title';
-  title.textContent = `Sprint ${sprint.sprint_number}`;
+  title.textContent = `${sprint.start_date} → ${sprint.end_date}`;
   summary.appendChild(title);
 
-  const range = document.createElement('span');
-  range.className = 'range';
-  range.textContent = `${sprint.start_date} → ${sprint.end_date}`;
-  summary.appendChild(range);
+  const numberLabel = document.createElement('span');
+  numberLabel.className = 'range';
+  numberLabel.textContent = sprint.sprint_number ? `Sprint ${sprint.sprint_number}` : '';
+  summary.appendChild(numberLabel);
+
+  const editNumberBtn = document.createElement('button');
+  editNumberBtn.type = 'button';
+  editNumberBtn.className = 'btn-edit';
+  editNumberBtn.title = sprint.sprint_number ? 'Edit sprint number' : 'Add sprint number';
+  editNumberBtn.textContent = '✎';
+  editNumberBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSprintNumberForm(card, sprint);
+  });
+  summary.appendChild(editNumberBtn);
 
   const total = document.createElement('span');
   total.className = 'total';
@@ -619,6 +659,50 @@ function renderSprintCard(sprint) {
 
   card.appendChild(body);
   return card;
+}
+
+function toggleSprintNumberForm(card, sprint) {
+  const existing = card.querySelector('.sprint-number-form');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  const form = document.createElement('form');
+  form.className = 'sprint-number-form';
+  form.addEventListener('click', (e) => e.stopPropagation());
+  form.innerHTML = `
+    <input type="number" name="sprintNumber" placeholder="Sprint #" value="${sprint.sprint_number ?? ''}" />
+    <button type="submit">Save</button>
+    <button type="button" class="cancel">Cancel</button>
+    <div class="edit-error"></div>
+  `;
+
+  form.querySelector('.cancel').addEventListener('click', (e) => {
+    e.stopPropagation();
+    form.remove();
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const value = form.elements.sprintNumber.value.trim();
+
+    const res = await fetch(`/api/sprints/${sprint.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sprint_number: value === '' ? null : Number(value) }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to save' }));
+      form.querySelector('.edit-error').textContent = err.error || 'Failed to save';
+      return;
+    }
+
+    loadSprints();
+  });
+
+  card.insertBefore(form, card.querySelector('.sprint-body'));
 }
 
 function renderDayBlock(day) {
@@ -776,152 +860,23 @@ function renderStatsSummary(data) {
 }
 
 // ---------- Notes ----------
+//
+// Add-only: entries are saved to the database but intentionally not listed
+// or editable here.
 
-let notesInitialized = false;
+let noteCategoriesLoaded = false;
 
-async function initNotes() {
-  if (!notesInitialized) {
-    notesInitialized = true;
+async function initNotesTab() {
+  if (!noteCategoriesLoaded) {
+    noteCategoriesLoaded = true;
     const res = await fetch('/api/note-categories');
-    state.noteCategories = await res.json();
-    document.getElementById('note-category').innerHTML = noteCategoryOptionsHtml(state.noteCategories[0]);
-
-    const monthInput = document.getElementById('notes-month');
-    if (!monthInput.value) monthInput.value = state.dateKey.slice(0, 7);
-    const dateInput = document.getElementById('note-date');
-    if (!dateInput.value) dateInput.value = state.dateKey;
+    const categories = await res.json();
+    document.getElementById('note-category').innerHTML = categories
+      .map((c) => `<option value="${escapeAttr(c)}">${escapeAttr(c)}</option>`)
+      .join('');
   }
-  loadNotes();
-}
-
-document.getElementById('notes-month').addEventListener('change', loadNotes);
-
-function noteCategoryOptionsHtml(selected) {
-  return state.noteCategories
-    .map((c) => `<option value="${escapeAttr(c)}"${c === selected ? ' selected' : ''}>${escapeAttr(c)}</option>`)
-    .join('');
-}
-
-async function loadNotes() {
-  const month = document.getElementById('notes-month').value;
-  if (!month) return;
-
-  const res = await fetch(`/api/notes?month=${month}`);
-  if (!res.ok) return;
-  renderNotesGroups(await res.json());
-}
-
-function renderNotesGroups(notes) {
-  const container = document.getElementById('notes-groups');
-  container.innerHTML = '';
-
-  state.noteCategories.forEach((category) => {
-    const group = document.createElement('div');
-    group.className = 'notes-category-group';
-
-    const heading = document.createElement('h3');
-    const dot = document.createElement('span');
-    dot.className = 'notes-category-dot';
-    dot.style.background = noteCategoryColor(category);
-    heading.appendChild(dot);
-    heading.appendChild(document.createTextNode(category));
-    group.appendChild(heading);
-
-    const entries = notes.filter((n) => n.category === category);
-    if (entries.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'empty-state';
-      empty.textContent = 'No entries this month.';
-      group.appendChild(empty);
-    } else {
-      entries.forEach((note) => group.appendChild(renderNoteItem(note)));
-    }
-
-    container.appendChild(group);
-  });
-}
-
-function renderNoteItem(note) {
-  const item = document.createElement('div');
-  item.className = 'note-item';
-
-  const date = document.createElement('div');
-  date.className = 'note-date';
-  date.textContent = formatDateLabel(note.date);
-  item.appendChild(date);
-
-  const text = document.createElement('div');
-  text.className = 'note-text';
-  text.textContent = note.text;
-  item.appendChild(text);
-
-  const actions = document.createElement('div');
-  actions.className = 'note-actions';
-
-  const editBtn = document.createElement('button');
-  editBtn.className = 'btn-edit';
-  editBtn.textContent = '✎';
-  editBtn.title = 'Edit note';
-  editBtn.addEventListener('click', () => toggleEditNoteForm(item, note));
-  actions.appendChild(editBtn);
-
-  const delBtn = document.createElement('button');
-  delBtn.className = 'btn-delete';
-  delBtn.textContent = '×';
-  delBtn.title = 'Delete';
-  delBtn.addEventListener('click', async () => {
-    await fetch(`/api/notes/${note.id}`, { method: 'DELETE' });
-    loadNotes();
-  });
-  actions.appendChild(delBtn);
-
-  item.appendChild(actions);
-  return item;
-}
-
-function toggleEditNoteForm(item, note) {
-  const existing = item.querySelector('.edit-note-form');
-  if (existing) {
-    existing.remove();
-    return;
-  }
-
-  const form = document.createElement('form');
-  form.className = 'edit-note-form';
-  form.innerHTML = `
-    <input type="date" name="date" value="${escapeAttr(note.date)}" required />
-    <select name="category">${noteCategoryOptionsHtml(note.category)}</select>
-    <textarea name="text" required>${escapeAttr(note.text)}</textarea>
-    <button type="submit">Save</button>
-    <button type="button" class="cancel">Cancel</button>
-    <div class="edit-error"></div>
-  `;
-
-  form.querySelector('.cancel').addEventListener('click', () => form.remove());
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const date = form.elements.date.value;
-    const category = form.elements.category.value;
-    const text = form.elements.text.value.trim();
-    if (!date || !text) return;
-
-    const res = await fetch(`/api/notes/${note.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, category, text }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Failed to save' }));
-      form.querySelector('.edit-error').textContent = err.error || 'Failed to save';
-      return;
-    }
-
-    loadNotes();
-  });
-
-  item.appendChild(form);
+  const dateInput = document.getElementById('note-date');
+  if (!dateInput.value) dateInput.value = state.dateKey;
 }
 
 document.getElementById('add-note-form').addEventListener('submit', async (e) => {
@@ -930,6 +885,7 @@ document.getElementById('add-note-form').addEventListener('submit', async (e) =>
   const category = document.getElementById('note-category').value;
   const textInput = document.getElementById('note-text');
   const text = textInput.value.trim();
+  const status = document.getElementById('note-save-status');
   if (!date || !category || !text) return;
 
   const res = await fetch('/api/notes', {
@@ -940,8 +896,73 @@ document.getElementById('add-note-form').addEventListener('submit', async (e) =>
 
   if (res.ok) {
     textInput.value = '';
-    loadNotes();
+    status.textContent = 'Saved.';
+    status.className = 'note-save-status success';
+  } else {
+    const err = await res.json().catch(() => ({ error: 'Failed to save' }));
+    status.textContent = err.error || 'Failed to save';
+    status.className = 'note-save-status error';
   }
+});
+
+// ---------- Integrations ----------
+
+async function loadIntegrationStatus() {
+  const res = await fetch('/api/integrations/calendar');
+  const data = await res.json();
+
+  document.getElementById('integration-ics-url').value = data.icsUrl || '';
+  document.getElementById('integration-disconnect-btn').hidden = !data.icsUrl;
+  renderIntegrationStatus(data);
+}
+
+function renderIntegrationStatus(data) {
+  const status = document.getElementById('integration-status');
+  if (!data.icsUrl) {
+    status.textContent = 'No calendar linked yet.';
+    status.className = 'integration-status';
+  } else if (data.error) {
+    status.textContent = `Linked, but the last sync failed: ${data.error}`;
+    status.className = 'integration-status error';
+  } else {
+    status.textContent = `Connected — last synced ${data.fetchedAt ? formatTime(data.fetchedAt) : 'just now'}.`;
+    status.className = 'integration-status success';
+  }
+}
+
+document.getElementById('integration-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('integration-ics-url');
+  const icsUrl = input.value.trim();
+  if (!icsUrl) return;
+
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  try {
+    const res = await fetch('/api/integrations/calendar', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ icsUrl }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const status = document.getElementById('integration-status');
+      status.textContent = data.error || 'Failed to save';
+      status.className = 'integration-status error';
+      return;
+    }
+    document.getElementById('integration-disconnect-btn').hidden = false;
+    renderIntegrationStatus(data);
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+document.getElementById('integration-disconnect-btn').addEventListener('click', async () => {
+  await fetch('/api/integrations/calendar', { method: 'DELETE' });
+  document.getElementById('integration-ics-url').value = '';
+  document.getElementById('integration-disconnect-btn').hidden = true;
+  renderIntegrationStatus({ icsUrl: null });
 });
 
 // ---------- Init ----------

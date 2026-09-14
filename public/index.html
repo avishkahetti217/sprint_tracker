@@ -15,6 +15,7 @@
         <button id="tab-sprints" class="tab" data-tab="sprints">Sprints</button>
         <button id="tab-stats" class="tab" data-tab="stats">Statistics</button>
         <button id="tab-notes" class="tab" data-tab="notes">Notes</button>
+        <button id="tab-integrations" class="tab" data-tab="integrations">Integrations</button>
       </nav>
       <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle dark mode">🌙</button>
     </div>
@@ -83,18 +84,30 @@
     </section>
 
     <section id="view-notes" class="view">
-      <div class="notes-toolbar">
-        <label>Month <input type="month" id="notes-month" /></label>
-      </div>
-
       <form id="add-note-form" class="add-note-form">
         <input type="date" id="note-date" required />
         <select id="note-category"></select>
         <textarea id="note-text" placeholder="What happened?" required></textarea>
         <button type="submit">Add note</button>
       </form>
+      <div id="note-save-status" class="note-save-status"></div>
+    </section>
 
-      <div id="notes-groups"></div>
+    <section id="view-integrations" class="view">
+      <div class="integration-card">
+        <h3>Google Calendar</h3>
+        <p class="integration-desc">
+          Paste your calendar's private "Secret address in iCal format" (Google
+          Calendar &rarr; Settings &rarr; your calendar &rarr; Integrate calendar).
+          Events from it are pulled automatically and shown under Today's Meetings.
+        </p>
+        <form id="integration-form" class="integration-form">
+          <input type="url" id="integration-ics-url" placeholder="https://calendar.google.com/calendar/ical/..." />
+          <button type="submit">Save</button>
+          <button type="button" id="integration-disconnect-btn" class="disconnect-btn" hidden>Disconnect</button>
+        </form>
+        <div id="integration-status" class="integration-status"></div>
+      </div>
     </section>
   </main>
 

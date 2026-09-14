@@ -25,12 +25,12 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 function getOrCreateSprint(dateKey) {
-  const { sprintNumber, startDate, endDate } = computeSprintForDate(dateKey);
-  let sprint = db.prepare('SELECT * FROM sprints WHERE sprint_number = ?').get(sprintNumber);
+  const { startDate, endDate } = computeSprintForDate(dateKey);
+  let sprint = db.prepare('SELECT * FROM sprints WHERE start_date = ?').get(startDate);
   if (!sprint) {
     const info = db
-      .prepare('INSERT INTO sprints (sprint_number, start_date, end_date) VALUES (?, ?, ?)')
-      .run(sprintNumber, startDate, endDate);
+      .prepare('INSERT INTO sprints (sprint_number, start_date, end_date) VALUES (NULL, ?, ?)')
+      .run(startDate, endDate);
     sprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(info.lastInsertRowid);
   }
   return sprint;
@@ -196,7 +196,7 @@ app.patch('/api/tasks/:id', (req, res) => {
   const comment =
     req.body.comment !== undefined ? req.body.comment.trim() || null : task.comment;
   const category =
-    req.body.category !== undefined ? req.body.category.trim() || null : task.category;
+    req.body.category !== undefined ? (req.body.category ? req.body.category.trim() || null : null) : task.category;
 
   if (category && !TASK_CATEGORIES.includes(category)) {
     return res.status(400).json({ error: 'invalid category' });
@@ -218,7 +218,7 @@ app.delete('/api/tasks/:id', (req, res) => {
 
 // All sprints, each with its days and tasks, for the sprint-by-sprint view.
 app.get('/api/sprints', (req, res) => {
-  const sprints = db.prepare('SELECT * FROM sprints ORDER BY sprint_number DESC').all();
+  const sprints = db.prepare('SELECT * FROM sprints ORDER BY start_date DESC').all();
 
   const result = sprints.map((sprint) => {
     const days = db.prepare('SELECT * FROM days WHERE sprint_id = ? ORDER BY date').all(sprint.id);
@@ -231,6 +231,32 @@ app.get('/api/sprints', (req, res) => {
   });
 
   res.json(result);
+});
+
+// Set or clear the optional, user-assigned sprint number for a period.
+app.patch('/api/sprints/:id', (req, res) => {
+  const sprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(req.params.id);
+  if (!sprint) return res.status(404).json({ error: 'not found' });
+
+  const raw = req.body.sprint_number;
+  let sprintNumber = null;
+  if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+    sprintNumber = Number(raw);
+    if (!Number.isInteger(sprintNumber)) {
+      return res.status(400).json({ error: 'sprint_number must be a whole number' });
+    }
+  }
+
+  try {
+    db.prepare('UPDATE sprints SET sprint_number = ? WHERE id = ?').run(sprintNumber, sprint.id);
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) {
+      return res.status(400).json({ error: 'that sprint number is already used by another period' });
+    }
+    throw err;
+  }
+
+  res.json(db.prepare('SELECT * FROM sprints WHERE id = ?').get(sprint.id));
 });
 
 function enumerateDateKeys(startKey, endKey) {
@@ -302,21 +328,19 @@ function formatHM(seconds) {
   return `${h}:${String(m).padStart(2, '0')}`;
 }
 
-// CSV report for one or more sprints (by sprint_number), covering every day and task in them.
+// CSV report for one or more sprints (by id), covering every day and task in them.
 app.get('/api/sprints/export', (req, res) => {
-  const numbers = String(req.query.numbers || '')
+  const ids = String(req.query.ids || '')
     .split(',')
     .map(Number)
     .filter((n) => !Number.isNaN(n));
-  if (numbers.length === 0) return res.status(400).json({ error: 'numbers query param is required' });
+  if (ids.length === 0) return res.status(400).json({ error: 'ids query param is required' });
 
-  const placeholders = numbers.map(() => '?').join(',');
-  const sprints = db
-    .prepare(`SELECT * FROM sprints WHERE sprint_number IN (${placeholders}) ORDER BY sprint_number`)
-    .all(...numbers);
+  const placeholders = ids.map(() => '?').join(',');
+  const sprints = db.prepare(`SELECT * FROM sprints WHERE id IN (${placeholders}) ORDER BY start_date`).all(...ids);
 
   const rows = [
-    ['Sprint', 'Sprint Start', 'Sprint End', 'Date', 'Task', 'Category', 'Comment', 'Start Time', 'End Time', 'Duration (h:mm)', 'Status'],
+    ['Sprint #', 'Sprint Start', 'Sprint End', 'Date', 'Task', 'Category', 'Comment', 'Start Time', 'End Time', 'Duration (h:mm)', 'Status'],
   ];
 
   for (const sprint of sprints) {
@@ -324,12 +348,12 @@ app.get('/api/sprints/export', (req, res) => {
     for (const day of days) {
       const tasks = tasksForDay(day.id);
       if (tasks.length === 0) {
-        rows.push([sprint.sprint_number, sprint.start_date, sprint.end_date, day.date, '', '', '', '', '', '', '']);
+        rows.push([sprint.sprint_number || '', sprint.start_date, sprint.end_date, day.date, '', '', '', '', '', '', '']);
         continue;
       }
       for (const task of tasks) {
         rows.push([
-          sprint.sprint_number,
+          sprint.sprint_number || '',
           sprint.start_date,
           sprint.end_date,
           day.date,
@@ -347,7 +371,7 @@ app.get('/api/sprints/export', (req, res) => {
 
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');
   res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="sprints-${numbers.join('-')}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="sprints-${ids.join('-')}.csv"`);
   res.send(csv);
 });
 
@@ -410,19 +434,37 @@ app.delete('/api/notes/:id', (req, res) => {
   res.status(204).end();
 });
 
-// ---------- Google Calendar sync ----------
+// ---------- Google Calendar integration ----------
 //
-// Reads GOOGLE_CALENDAR_ICS_URL (a private "secret address in iCal format" from
-// Google Calendar settings — see .env.example) and pulls it on a timer so the
-// client never waits on Google; it just reads whatever was cached last.
+// The ICS feed URL (a private "secret address in iCal format" from Google
+// Calendar settings) is stored in the database and managed via the
+// Integrations tab, and pulled on a timer so the client never waits on
+// Google — it just reads whatever was cached last.
 
+const CALENDAR_URL_SETTING_KEY = 'google_calendar_ics_url';
 const CALENDAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 let calendarCache = { data: null, fetchedAt: null, error: null };
 
+function getCalendarIcsUrl() {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(CALENDAR_URL_SETTING_KEY);
+  return row ? row.value : null;
+}
+
+function setCalendarIcsUrl(icsUrl) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
+    CALENDAR_URL_SETTING_KEY,
+    icsUrl
+  );
+}
+
+function clearCalendarIcsUrl() {
+  db.prepare('DELETE FROM settings WHERE key = ?').run(CALENDAR_URL_SETTING_KEY);
+}
+
 async function refreshCalendarCache() {
-  const icsUrl = process.env.GOOGLE_CALENDAR_ICS_URL;
+  const icsUrl = getCalendarIcsUrl();
   if (!icsUrl) {
-    calendarCache = { data: null, fetchedAt: null, error: 'GOOGLE_CALENDAR_ICS_URL is not configured (see .env.example)' };
+    calendarCache = { data: null, fetchedAt: null, error: 'No calendar linked yet — add one in the Integrations tab' };
     return;
   }
   try {
@@ -481,29 +523,77 @@ function calendarEventsForDate(dateKey) {
 // have one on this day (matched by calendar_uid), so meetings count toward the
 // day's logged hours automatically. All-day events (holidays, reminders) are
 // skipped — they aren't real time spent.
+//
+// A meeting is only marked done once its scheduled end time has actually
+// passed — one that hasn't started yet, or is still in progress, is inserted
+// as open, and gets auto-completed on a later sync once its end time passes
+// (unless the user already marked it done manually, which is left alone).
 function importCalendarEventsAsTasks(dateKey, events) {
   const timedEvents = events.filter((ev) => !ev.allDay);
   if (timedEvents.length === 0) return;
 
   const day = getOrCreateDay(dateKey);
-  const existingUids = new Set(
+  const existingByUid = new Map(
     db
-      .prepare('SELECT calendar_uid FROM tasks WHERE day_id = ? AND calendar_uid IS NOT NULL')
+      .prepare('SELECT id, status, calendar_uid FROM tasks WHERE day_id = ? AND calendar_uid IS NOT NULL')
       .all(day.id)
-      .map((r) => r.calendar_uid)
+      .map((r) => [r.calendar_uid, r])
   );
 
   const insert = db.prepare(
     `INSERT INTO tasks (day_id, description, category, calendar_uid, start_time, end_time, duration_seconds, status)
-     VALUES (?, ?, 'Meetings', ?, ?, ?, ?, 'done')`
+     VALUES (?, ?, 'Meetings', ?, ?, ?, ?, ?)`
   );
+  const markDone = db.prepare("UPDATE tasks SET end_time = ?, duration_seconds = ?, status = 'done' WHERE id = ?");
+
+  const now = new Date();
 
   for (const ev of timedEvents) {
-    if (existingUids.has(ev.uid)) continue;
-    const durationSeconds = Math.max(0, Math.round((new Date(ev.end) - new Date(ev.start)) / 1000));
-    insert.run(day.id, ev.title, ev.uid, ev.start, ev.end, durationSeconds);
+    const end = new Date(ev.end);
+    const hasEnded = now >= end;
+    const durationSeconds = Math.max(0, Math.round((end - new Date(ev.start)) / 1000));
+    const existing = existingByUid.get(ev.uid);
+
+    if (existing) {
+      if (existing.status === 'open' && hasEnded) {
+        markDone.run(ev.end, durationSeconds, existing.id);
+      }
+      continue;
+    }
+
+    if (hasEnded) {
+      insert.run(day.id, ev.title, ev.uid, ev.start, ev.end, durationSeconds, 'done');
+    } else {
+      insert.run(day.id, ev.title, ev.uid, ev.start, null, null, 'open');
+    }
   }
 }
+
+// Integrations tab: view/set/clear the linked calendar's ICS URL.
+app.get('/api/integrations/calendar', (req, res) => {
+  res.json({
+    icsUrl: getCalendarIcsUrl(),
+    fetchedAt: calendarCache.fetchedAt,
+    error: calendarCache.error,
+  });
+});
+
+app.put('/api/integrations/calendar', async (req, res) => {
+  const icsUrl = (req.body.icsUrl || '').trim();
+  if (!/^https?:\/\/.+/.test(icsUrl)) {
+    return res.status(400).json({ error: 'Enter a valid http(s) calendar URL' });
+  }
+
+  setCalendarIcsUrl(icsUrl);
+  await refreshCalendarCache();
+  res.json({ icsUrl, fetchedAt: calendarCache.fetchedAt, error: calendarCache.error });
+});
+
+app.delete('/api/integrations/calendar', (req, res) => {
+  clearCalendarIcsUrl();
+  calendarCache = { data: null, fetchedAt: null, error: 'No calendar linked yet — add one in the Integrations tab' };
+  res.status(204).end();
+});
 
 app.get('/api/calendar/day', (req, res) => {
   const dateKey = req.query.date || toDateKey(new Date());

@@ -1,8 +1,8 @@
 // Sprints are fixed 2-week blocks (Monday to Friday of the following week),
-// numbered consistently from a fixed anchor Monday so a given date always
-// maps to the same sprint number regardless of when it's entered.
-const ANCHOR = new Date(2026, 7, 24); // Monday, start of Sprint 134
-const ANCHOR_SPRINT_NUMBER = 134;
+// aligned to a fixed anchor Monday so a given date always maps to the same
+// start/end boundary regardless of when it's entered. Sprints have no
+// inherent number — that's an optional label the user can set per period.
+const ANCHOR = new Date(2026, 7, 24); // Monday, aligns the fixed 14-day grid
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function dateOnly(d) {
@@ -31,7 +31,6 @@ function computeSprintForDate(dateKey) {
   const sprintEnd = new Date(sprintStart.getTime() + 11 * DAY_MS); // Friday of week 2
 
   return {
-    sprintNumber: ANCHOR_SPRINT_NUMBER + sprintOffset,
     startDate: toDateKey(sprintStart),
     endDate: toDateKey(sprintEnd),
   };
