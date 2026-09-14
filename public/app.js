@@ -478,6 +478,7 @@ function toggleEditTimesForm(li, task, onChange) {
     <label class="edit-field-wide">Comment<input type="text" name="comment" value="${escapeAttr(task.comment || '')}" /></label>
     <label>Start<input type="time" name="start" value="${toLocalTimeInputValue(task.start_time)}" required /></label>
     <label>End<input type="time" name="end" value="${toLocalTimeInputValue(task.end_time)}" /></label>
+    <label>Or minutes spent<input type="number" name="durationMinutes" min="1" step="1" placeholder="e.g. 10" /></label>
     <button type="submit">Save</button>
     <button type="button" class="cancel">Cancel</button>
     <div class="edit-error"></div>
@@ -492,6 +493,7 @@ function toggleEditTimesForm(li, task, onChange) {
     const comment = form.elements.comment.value.trim();
     const startValue = form.elements.start.value;
     const endValue = form.elements.end.value;
+    const durationMinutesValue = form.elements.durationMinutes.value.trim();
     if (!description || !startValue) return;
 
     const errorBox = form.querySelector('.edit-error');
@@ -507,12 +509,21 @@ function toggleEditTimesForm(li, task, onChange) {
       return;
     }
 
+    const start = combineDateAndTime(task.start_time, startValue);
+    let endIso = null;
+    if (durationMinutesValue && Number(durationMinutesValue) > 0) {
+      // "Minutes spent" takes precedence over a typed End time when both are filled.
+      endIso = new Date(start.getTime() + Number(durationMinutesValue) * 60000).toISOString();
+    } else if (endValue) {
+      endIso = combineDateAndTime(task.start_time, endValue).toISOString();
+    }
+
     const timesRes = await fetch(`/api/tasks/${task.id}/times`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        start_time: combineDateAndTime(task.start_time, startValue).toISOString(),
-        end_time: endValue ? combineDateAndTime(task.start_time, endValue).toISOString() : null,
+        start_time: start.toISOString(),
+        end_time: endIso,
       }),
     });
     if (!timesRes.ok) {
