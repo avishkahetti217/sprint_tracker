@@ -14,6 +14,7 @@ const TASK_CATEGORIES = [
   'Meetings',
   'Adhoc',
   'Support',
+  'Domain learning',
 ];
 
 const NOTE_CATEGORIES = ['Challenges', 'Achievements', 'Mistakes', 'Learnings'];

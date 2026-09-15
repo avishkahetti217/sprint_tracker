@@ -13,6 +13,7 @@ const CATEGORY_COLORS = {
   Meetings: '#fa5252',
   Adhoc: '#82c91e',
   Support: '#15aabf',
+  'Domain learning': '#ae3ec9',
   Uncategorized: '#868e96',
 };
 
@@ -31,6 +32,7 @@ const CATEGORY_KEYWORDS = {
   Meetings: ['meeting', 'call with', 'sync up', 'standup', 'stand-up', 'huddle', '1:1', '1-1', 'catch up', 'catchup'],
   Adhoc: ['adhoc', 'ad-hoc', 'ad hoc'],
   Support: ['support', 'ticket', 'help desk'],
+  'Domain learning': ['learn', 'domain learning', 'domain knowledge', 'kt session', 'knowledge transfer', 'onboarding'],
 };
 
 function guessCategoryFromText(text) {
