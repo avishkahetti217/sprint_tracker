@@ -161,11 +161,6 @@ app.post('/api/tasks/:id/subtasks', (req, res) => {
   res.status(201).json(db.prepare('SELECT * FROM subtasks WHERE id = ?').get(info.lastInsertRowid));
 });
 
-app.delete('/api/subtasks/:id', (req, res) => {
-  db.prepare('DELETE FROM subtasks WHERE id = ?').run(req.params.id);
-  res.status(204).end();
-});
-
 // Mark a task done: records end_time and computes duration.
 app.patch('/api/tasks/:id/complete', (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);

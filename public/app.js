@@ -479,18 +479,6 @@ function renderSubtasksSection(task, opts) {
       text.textContent = sub.text;
       item.appendChild(text);
 
-      if (opts.showEditButton) {
-        const del = document.createElement('button');
-        del.className = 'btn-delete';
-        del.textContent = '×';
-        del.title = 'Remove sub-task';
-        del.addEventListener('click', async () => {
-          await fetch(`/api/subtasks/${sub.id}`, { method: 'DELETE' });
-          if (opts.onChange) opts.onChange();
-        });
-        item.appendChild(del);
-      }
-
       list.appendChild(item);
     });
     section.appendChild(list);
