@@ -453,14 +453,69 @@ function renderTaskItem(task, opts) {
 
   li.appendChild(row);
 
-  if (task.comment) {
-    const comment = document.createElement('div');
-    comment.className = 'task-comment';
-    comment.textContent = task.comment;
-    li.appendChild(comment);
-  }
+  const subtasksSection = renderSubtasksSection(task, opts);
+  if (subtasksSection) li.appendChild(subtasksSection);
 
   return li;
+}
+
+// Bulleted list of the sub-tasks attended during a task's time slot, plus an
+// inline "add one at a time" form when editing is allowed for this view.
+function renderSubtasksSection(task, opts) {
+  const hasSubtasks = task.subtasks && task.subtasks.length > 0;
+  if (!hasSubtasks && !opts.showEditButton) return null;
+
+  const section = document.createElement('div');
+  section.className = 'subtasks-section';
+
+  if (hasSubtasks) {
+    const list = document.createElement('ul');
+    list.className = 'subtask-list';
+    task.subtasks.forEach((sub) => {
+      const item = document.createElement('li');
+      item.className = 'subtask-item';
+
+      const text = document.createElement('span');
+      text.textContent = sub.text;
+      item.appendChild(text);
+
+      if (opts.showEditButton) {
+        const del = document.createElement('button');
+        del.className = 'btn-delete';
+        del.textContent = '×';
+        del.title = 'Remove sub-task';
+        del.addEventListener('click', async () => {
+          await fetch(`/api/subtasks/${sub.id}`, { method: 'DELETE' });
+          if (opts.onChange) opts.onChange();
+        });
+        item.appendChild(del);
+      }
+
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+  }
+
+  if (opts.showEditButton) {
+    const form = document.createElement('form');
+    form.className = 'add-subtask-form';
+    form.innerHTML = `<input type="text" placeholder="Add a sub-task..." /><button type="submit">Add</button>`;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = form.querySelector('input');
+      const text = input.value.trim();
+      if (!text) return;
+      await fetch(`/api/tasks/${task.id}/subtasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (opts.onChange) opts.onChange();
+    });
+    section.appendChild(form);
+  }
+
+  return section;
 }
 
 function toggleEditTimesForm(li, task, onChange) {
@@ -475,7 +530,6 @@ function toggleEditTimesForm(li, task, onChange) {
   form.innerHTML = `
     <label class="edit-field-wide">Name<input type="text" name="description" value="${escapeAttr(task.description)}" required /></label>
     <label>Category<select name="category">${categoryOptionsHtml(task.category)}</select></label>
-    <label class="edit-field-wide">Comment<input type="text" name="comment" value="${escapeAttr(task.comment || '')}" /></label>
     <label>Start<input type="time" name="start" value="${toLocalTimeInputValue(task.start_time)}" required /></label>
     <label>End<input type="time" name="end" value="${toLocalTimeInputValue(task.end_time)}" /></label>
     <label>Or minutes spent<input type="number" name="durationMinutes" min="1" step="1" placeholder="e.g. 10" /></label>
@@ -490,7 +544,6 @@ function toggleEditTimesForm(li, task, onChange) {
     e.preventDefault();
     const description = form.elements.description.value.trim();
     const category = form.elements.category.value || null;
-    const comment = form.elements.comment.value.trim();
     const startValue = form.elements.start.value;
     const endValue = form.elements.end.value;
     const durationMinutesValue = form.elements.durationMinutes.value.trim();
@@ -501,7 +554,7 @@ function toggleEditTimesForm(li, task, onChange) {
     const detailsRes = await fetch(`/api/tasks/${task.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description, comment, category }),
+      body: JSON.stringify({ description, category }),
     });
     if (!detailsRes.ok) {
       const err = await detailsRes.json().catch(() => ({ error: 'Failed to save' }));
@@ -563,18 +616,16 @@ document.getElementById('add-task-form').addEventListener('submit', async (e) =>
   e.preventDefault();
   const categorySelect = document.getElementById('task-category');
   const description = document.getElementById('task-description').value.trim();
-  const comment = document.getElementById('task-comment').value.trim();
   const category = categorySelect.value || null;
   if (!description) return;
 
   await fetch(`/api/days/${state.dayId}/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ description, comment, category }),
+    body: JSON.stringify({ description, category }),
   });
 
   document.getElementById('task-description').value = '';
-  document.getElementById('task-comment').value = '';
   categorySelect.value = DEFAULT_TASK_CATEGORY;
   taskCategoryTouchedByUser = false;
   loadDay();

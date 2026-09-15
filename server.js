@@ -48,8 +48,13 @@ function getOrCreateDay(dateKey) {
   return day;
 }
 
+function subtasksForTask(taskId) {
+  return db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position').all(taskId);
+}
+
 function tasksForDay(dayId) {
-  return db.prepare('SELECT * FROM tasks WHERE day_id = ? ORDER BY id').all(dayId);
+  const tasks = db.prepare('SELECT * FROM tasks WHERE day_id = ? ORDER BY id').all(dayId);
+  return tasks.map((t) => ({ ...t, subtasks: subtasksForTask(t.id) }));
 }
 
 function totalSeconds(tasks) {
@@ -121,7 +126,6 @@ app.post('/api/days/:dayId/tasks', (req, res) => {
 
   const description = (req.body.description || '').trim();
   if (!description) return res.status(400).json({ error: 'description is required' });
-  const comment = (req.body.comment || '').trim() || null;
 
   const category = (req.body.category || '').trim() || null;
   if (category && !TASK_CATEGORIES.includes(category)) {
@@ -130,11 +134,36 @@ app.post('/api/days/:dayId/tasks', (req, res) => {
 
   const info = db
     .prepare(
-      "INSERT INTO tasks (day_id, description, comment, category, start_time, status) VALUES (?, ?, ?, ?, ?, 'open')"
+      "INSERT INTO tasks (day_id, description, category, start_time, status) VALUES (?, ?, ?, ?, 'open')"
     )
-    .run(dayId, description, comment, category, new Date().toISOString());
+    .run(dayId, description, category, new Date().toISOString());
 
-  res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json({ ...task, subtasks: [] });
+});
+
+// Append a subtask to a task's list (one at a time).
+app.post('/api/tasks/:id/subtasks', (req, res) => {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+
+  const text = (req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'text is required' });
+
+  const maxPosition = db
+    .prepare('SELECT MAX(position) as maxPos FROM subtasks WHERE task_id = ?')
+    .get(task.id).maxPos;
+
+  const info = db
+    .prepare('INSERT INTO subtasks (task_id, text, position, created_at) VALUES (?, ?, ?, ?)')
+    .run(task.id, text, (maxPosition || 0) + 1, new Date().toISOString());
+
+  res.status(201).json(db.prepare('SELECT * FROM subtasks WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.delete('/api/subtasks/:id', (req, res) => {
+  db.prepare('DELETE FROM subtasks WHERE id = ?').run(req.params.id);
+  res.status(204).end();
 });
 
 // Mark a task done: records end_time and computes duration.
@@ -186,15 +215,13 @@ app.patch('/api/tasks/:id/times', (req, res) => {
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id));
 });
 
-// Edit a task's description/comment/category.
+// Edit a task's description/category.
 app.patch('/api/tasks/:id', (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
 
   const description =
     req.body.description !== undefined ? req.body.description.trim() : task.description;
-  const comment =
-    req.body.comment !== undefined ? req.body.comment.trim() || null : task.comment;
   const category =
     req.body.category !== undefined ? (req.body.category ? req.body.category.trim() || null : null) : task.category;
 
@@ -202,16 +229,16 @@ app.patch('/api/tasks/:id', (req, res) => {
     return res.status(400).json({ error: 'invalid category' });
   }
 
-  db.prepare('UPDATE tasks SET description = ?, comment = ?, category = ? WHERE id = ?').run(
+  db.prepare('UPDATE tasks SET description = ?, category = ? WHERE id = ?').run(
     description,
-    comment,
     category,
     task.id
   );
-  res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id));
+  res.json({ ...db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id), subtasks: subtasksForTask(task.id) });
 });
 
 app.delete('/api/tasks/:id', (req, res) => {
+  db.prepare('DELETE FROM subtasks WHERE task_id = ?').run(req.params.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   res.status(204).end();
 });
@@ -340,7 +367,7 @@ app.get('/api/sprints/export', (req, res) => {
   const sprints = db.prepare(`SELECT * FROM sprints WHERE id IN (${placeholders}) ORDER BY start_date`).all(...ids);
 
   const rows = [
-    ['Sprint #', 'Sprint Start', 'Sprint End', 'Date', 'Task', 'Category', 'Comment', 'Start Time', 'End Time', 'Duration (h:mm)', 'Status'],
+    ['Sprint #', 'Sprint Start', 'Sprint End', 'Date', 'Task', 'Category', 'Subtasks', 'Start Time', 'End Time', 'Duration (h:mm)', 'Status'],
   ];
 
   for (const sprint of sprints) {
@@ -359,7 +386,7 @@ app.get('/api/sprints/export', (req, res) => {
           day.date,
           task.description,
           task.category || '',
-          task.comment || '',
+          task.subtasks.map((s) => s.text).join('; '),
           task.start_time,
           task.end_time || '',
           formatHM(task.duration_seconds),

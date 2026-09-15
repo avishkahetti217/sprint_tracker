@@ -54,6 +54,14 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS subtasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    text TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
 `);
 
 // Migration: sprints used to be identified/looked-up by an auto-numbered
@@ -87,6 +95,23 @@ if (!taskColumns.includes('category')) {
 }
 if (!taskColumns.includes('calendar_uid')) {
   db.exec('ALTER TABLE tasks ADD COLUMN calendar_uid TEXT');
+}
+
+// Migration: free-text task comments are replaced by an ordered list of
+// subtasks. Carry over any existing comment as that task's first subtask,
+// then drop the now-unused column.
+if (taskColumns.includes('comment')) {
+  const tasksWithComments = db
+    .prepare("SELECT id, comment FROM tasks WHERE comment IS NOT NULL AND TRIM(comment) != ''")
+    .all();
+  const insertSubtask = db.prepare(
+    'INSERT INTO subtasks (task_id, text, position, created_at) VALUES (?, ?, 1, ?)'
+  );
+  const now = new Date().toISOString();
+  for (const t of tasksWithComments) {
+    insertSubtask.run(t.id, t.comment.trim(), now);
+  }
+  db.exec('ALTER TABLE tasks DROP COLUMN comment');
 }
 
 // One-time seed: carry over an existing GOOGLE_CALENDAR_ICS_URL from .env into the

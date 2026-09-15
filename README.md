@@ -1,4 +1,4 @@
-# Sprint Tracker
+# Work Tracker
 
 Single-user daily task tracker grouped into two-week sprints (Monday through
 the Friday of the following week). Single Node/Express process, plain

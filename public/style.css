@@ -227,11 +227,48 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   padding: 0 4px;
 }
 
-.task-comment {
-  margin-top: 6px;
+.subtasks-section { margin-top: 8px; }
+
+.subtask-list {
+  list-style: disc;
+  margin: 0 0 6px 0;
+  padding-left: 20px;
+}
+
+.subtask-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   color: var(--muted);
-  font-style: italic;
+  padding: 2px 0;
+}
+
+.subtask-item span { flex: 1; }
+
+.add-subtask-form {
+  display: flex;
+  gap: 6px;
+}
+
+.add-subtask-form input[type="text"] {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.add-subtask-form button {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--accent);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
 }
 
 .add-task-form {
@@ -252,7 +289,6 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 
 #task-description { flex: 2; min-width: 200px; }
 #task-category { flex: 1; min-width: 140px; }
-#task-comment { flex: 1; min-width: 160px; }
 
 .add-task-form button {
   border: none;
