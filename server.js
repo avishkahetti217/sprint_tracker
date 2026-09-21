@@ -59,7 +59,7 @@ function tasksForDay(dayId) {
 }
 
 function totalSeconds(tasks) {
-  return tasks.reduce((sum, t) => sum + (t.duration_seconds || 0), 0);
+  return tasks.reduce((sum, t) => sum + (t.status === 'cancelled' ? 0 : t.duration_seconds || 0), 0);
 }
 
 function goalsForDay(dayId) {
@@ -180,6 +180,19 @@ app.patch('/api/tasks/:id/complete', (req, res) => {
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id));
 });
 
+// Cancel a calendar-imported meeting task — used when the underlying meeting
+// itself was cancelled. Unlike delete, the row (and its calendar_uid) is kept
+// so a later sync never recreates it. Excluded from hour totals/stats.
+app.patch('/api/tasks/:id/cancel', (req, res) => {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+  if (!task.calendar_uid) {
+    return res.status(400).json({ error: 'only calendar-imported meetings can be cancelled' });
+  }
+  db.prepare("UPDATE tasks SET status = 'cancelled' WHERE id = ?").run(task.id);
+  res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id));
+});
+
 // Edit a task's start/end time directly (corrections after the fact).
 // Setting end_time marks the task done and recomputes duration; clearing it reopens the task.
 app.patch('/api/tasks/:id/times', (req, res) => {
@@ -234,6 +247,13 @@ app.patch('/api/tasks/:id', (req, res) => {
 });
 
 app.delete('/api/tasks/:id', (req, res) => {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+  if (task.status === 'done') return res.status(400).json({ error: 'a completed task cannot be deleted' });
+  if (task.status === 'cancelled') {
+    return res.status(400).json({ error: 'a cancelled meeting cannot be deleted (it would just resync)' });
+  }
+
   db.prepare('DELETE FROM subtasks WHERE task_id = ?').run(req.params.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   res.status(204).end();
@@ -302,7 +322,7 @@ app.get('/api/stats', (req, res) => {
 
   const rows = db
     .prepare(
-      `SELECT d.date as date, COALESCE(SUM(t.duration_seconds), 0) as totalSeconds
+      `SELECT d.date as date, COALESCE(SUM(CASE WHEN t.status = 'cancelled' THEN 0 ELSE t.duration_seconds END), 0) as totalSeconds
        FROM days d LEFT JOIN tasks t ON t.day_id = d.id
        WHERE d.date BETWEEN ? AND ?
        GROUP BY d.date`
@@ -322,7 +342,7 @@ app.get('/api/stats', (req, res) => {
     .prepare(
       `SELECT COALESCE(t.category, 'Uncategorized') as category, SUM(t.duration_seconds) as totalSeconds
        FROM days d JOIN tasks t ON t.day_id = d.id
-       WHERE d.date BETWEEN ? AND ? AND t.duration_seconds IS NOT NULL
+       WHERE d.date BETWEEN ? AND ? AND t.duration_seconds IS NOT NULL AND t.status != 'cancelled'
        GROUP BY category
        ORDER BY totalSeconds DESC`
     )
@@ -508,6 +528,7 @@ function calendarEventsForDate(dateKey) {
   for (const key of Object.keys(calendarCache.data)) {
     const item = calendarCache.data[key];
     if (item.type !== 'VEVENT') continue;
+    if (item.status && String(item.status).toUpperCase() === 'CANCELLED') continue;
 
     if (item.rrule) {
       // Recurring event: expand just the occurrences that fall on this day.

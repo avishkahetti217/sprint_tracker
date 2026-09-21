@@ -213,7 +213,11 @@ function renderDay(data) {
   const list = document.getElementById('task-list');
   list.innerHTML = '';
 
-  if (data.tasks.length === 0) {
+  // Cancelled meetings are kept in the database (so a resync doesn't recreate
+  // them) but shouldn't clutter the visible list.
+  const visibleTasks = data.tasks.filter((t) => t.status !== 'cancelled');
+
+  if (visibleTasks.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty-state';
     li.textContent = 'No tasks yet for this day.';
@@ -221,7 +225,8 @@ function renderDay(data) {
     return;
   }
 
-  data.tasks.forEach((task) =>
+  // Newest task first, so the most recent addition lands at the top of the page.
+  [...visibleTasks].reverse().forEach((task) =>
     list.appendChild(
       renderTaskItem(task, { showCompleteButton: true, showEditButton: true, showDeleteButton: true, onChange: loadDay })
     )
@@ -441,7 +446,19 @@ function renderTaskItem(task, opts) {
     row.appendChild(editBtn);
   }
 
-  if (opts.showDeleteButton) {
+  if (opts.showEditButton && task.calendar_uid) {
+    // Calendar-imported meetings use Cancel instead of Delete — deleting would
+    // just get recreated by the next sync, since calendar_uid is how it dedupes.
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-delete';
+    cancelBtn.textContent = '×';
+    cancelBtn.title = 'Cancel this meeting';
+    cancelBtn.addEventListener('click', async () => {
+      await cancelTask(task.id);
+      if (opts.onChange) opts.onChange();
+    });
+    row.appendChild(cancelBtn);
+  } else if (opts.showDeleteButton && task.status !== 'done' && !task.calendar_uid) {
     const del = document.createElement('button');
     del.className = 'btn-delete';
     del.textContent = '×';
@@ -465,7 +482,9 @@ function renderTaskItem(task, opts) {
 // inline "add one at a time" form when editing is allowed for this view.
 function renderSubtasksSection(task, opts) {
   const hasSubtasks = task.subtasks && task.subtasks.length > 0;
-  if (!hasSubtasks && !opts.showEditButton) return null;
+  // Once a task is done, its sub-task list is locked — no more additions.
+  const canAddSubtask = opts.showEditButton && task.status !== 'done';
+  if (!hasSubtasks && !canAddSubtask) return null;
 
   const section = document.createElement('div');
   section.className = 'subtasks-section';
@@ -486,7 +505,7 @@ function renderSubtasksSection(task, opts) {
     section.appendChild(list);
   }
 
-  if (opts.showEditButton) {
+  if (canAddSubtask) {
     const form = document.createElement('form');
     form.className = 'add-subtask-form';
     form.innerHTML = `<input type="text" placeholder="Add a sub-task..." /><button type="submit">Add</button>`;
@@ -522,7 +541,12 @@ function toggleEditTimesForm(li, task, onChange) {
     <label>Category<select name="category">${categoryOptionsHtml(task.category)}</select></label>
     <label>Start<input type="time" name="start" value="${toLocalTimeInputValue(task.start_time)}" required /></label>
     <label>End<input type="time" name="end" value="${toLocalTimeInputValue(task.end_time)}" /></label>
-    <label>Or minutes spent<input type="number" name="durationMinutes" min="1" step="1" placeholder="e.g. 10" /></label>
+    <label class="duration-field">Or time spent
+      <div class="duration-inputs">
+        <input type="number" name="durationHours" min="0" step="1" placeholder="0" /><span>h</span>
+        <input type="number" name="durationMinutes" min="0" max="59" step="1" placeholder="0" /><span>m</span>
+      </div>
+    </label>
     <button type="submit">Save</button>
     <button type="button" class="cancel">Cancel</button>
     <div class="edit-error"></div>
@@ -536,6 +560,7 @@ function toggleEditTimesForm(li, task, onChange) {
     const category = form.elements.category.value || null;
     const startValue = form.elements.start.value;
     const endValue = form.elements.end.value;
+    const durationHoursValue = form.elements.durationHours.value.trim();
     const durationMinutesValue = form.elements.durationMinutes.value.trim();
     if (!description || !startValue) return;
 
@@ -553,10 +578,11 @@ function toggleEditTimesForm(li, task, onChange) {
     }
 
     const start = combineDateAndTime(task.start_time, startValue);
+    const totalDurationMinutes = (Number(durationHoursValue) || 0) * 60 + (Number(durationMinutesValue) || 0);
     let endIso = null;
-    if (durationMinutesValue && Number(durationMinutesValue) > 0) {
-      // "Minutes spent" takes precedence over a typed End time when both are filled.
-      endIso = new Date(start.getTime() + Number(durationMinutesValue) * 60000).toISOString();
+    if (totalDurationMinutes > 0) {
+      // "Time spent" takes precedence over a typed End time when both are filled.
+      endIso = new Date(start.getTime() + totalDurationMinutes * 60000).toISOString();
     } else if (endValue) {
       endIso = combineDateAndTime(task.start_time, endValue).toISOString();
     }
@@ -587,6 +613,10 @@ async function completeTask(id) {
 
 async function deleteTask(id) {
   await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+}
+
+async function cancelTask(id) {
+  await fetch(`/api/tasks/${id}/cancel`, { method: 'PATCH' });
 }
 
 // Once the user picks a category themselves, stop auto-suggesting for this entry.
@@ -692,11 +722,6 @@ function renderSprintCard(sprint) {
   });
   summary.appendChild(editNumberBtn);
 
-  const total = document.createElement('span');
-  total.className = 'total';
-  total.textContent = formatDuration(sprint.totalSeconds) || '0m';
-  summary.appendChild(total);
-
   summary.addEventListener('click', () => card.classList.toggle('open'));
   card.appendChild(summary);
 
@@ -763,14 +788,16 @@ function renderDayBlock(day) {
 
   const header = document.createElement('div');
   header.className = 'day-block-header';
-  header.innerHTML = `<span class="date">${formatDateLabel(day.date)}</span><span>${formatDuration(day.totalSeconds) || '0m'}</span>`;
+  header.innerHTML = `<span class="date">${formatDateLabel(day.date)}</span>`;
   header.addEventListener('click', () => block.classList.toggle('open'));
   block.appendChild(header);
 
   const content = document.createElement('div');
   content.className = 'day-block-content';
 
-  if (day.tasks.length === 0) {
+  const visibleTasks = day.tasks.filter((t) => t.status !== 'cancelled');
+
+  if (visibleTasks.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     empty.textContent = 'No tasks.';
@@ -778,7 +805,7 @@ function renderDayBlock(day) {
   } else {
     const list = document.createElement('ul');
     list.className = 'task-list';
-    day.tasks.forEach((task) =>
+    visibleTasks.forEach((task) =>
       list.appendChild(
         renderTaskItem(task, { showCompleteButton: false, showDeleteButton: false, onChange: loadSprints })
       )
