@@ -4,6 +4,10 @@ const state = {
   taskCategories: [],
 };
 
+// Task ids whose ✎ edit form is currently open. Only used to gate adding
+// sub-tasks to an already-completed task — open tasks can always add one.
+const openTaskEditIds = new Set();
+
 const CATEGORY_COLORS = {
   Research: '#1c7ed6',
   'Story writing': '#7048e8',
@@ -442,7 +446,7 @@ function renderTaskItem(task, opts) {
     editBtn.className = 'btn-edit';
     editBtn.textContent = '✎';
     editBtn.title = 'Edit task';
-    editBtn.addEventListener('click', () => toggleEditTimesForm(li, task, opts.onChange));
+    editBtn.addEventListener('click', () => toggleEditTimesForm(li, task, opts));
     row.appendChild(editBtn);
   }
 
@@ -482,8 +486,9 @@ function renderTaskItem(task, opts) {
 // inline "add one at a time" form when editing is allowed for this view.
 function renderSubtasksSection(task, opts) {
   const hasSubtasks = task.subtasks && task.subtasks.length > 0;
-  // Once a task is done, its sub-task list is locked — no more additions.
-  const canAddSubtask = opts.showEditButton && task.status !== 'done';
+  // Open tasks can always add a sub-task; a completed task only allows it
+  // while its ✎ edit form is open.
+  const canAddSubtask = opts.showEditButton && (task.status !== 'done' || openTaskEditIds.has(task.id));
   if (!hasSubtasks && !canAddSubtask) return null;
 
   const section = document.createElement('div');
@@ -527,12 +532,25 @@ function renderSubtasksSection(task, opts) {
   return section;
 }
 
-function toggleEditTimesForm(li, task, onChange) {
+function refreshSubtasksSection(li, task, opts) {
+  const old = li.querySelector('.subtasks-section');
+  if (old) old.remove();
+  const updated = renderSubtasksSection(task, opts);
+  if (updated) li.appendChild(updated);
+}
+
+function toggleEditTimesForm(li, task, opts) {
+  const onChange = opts.onChange;
   const existing = li.querySelector('.edit-times-form');
   if (existing) {
     existing.remove();
+    openTaskEditIds.delete(task.id);
+    refreshSubtasksSection(li, task, opts);
     return;
   }
+
+  openTaskEditIds.add(task.id);
+  refreshSubtasksSection(li, task, opts);
 
   const form = document.createElement('form');
   form.className = 'edit-times-form';
@@ -552,7 +570,11 @@ function toggleEditTimesForm(li, task, onChange) {
     <div class="edit-error"></div>
   `;
 
-  form.querySelector('.cancel').addEventListener('click', () => form.remove());
+  form.querySelector('.cancel').addEventListener('click', () => {
+    form.remove();
+    openTaskEditIds.delete(task.id);
+    refreshSubtasksSection(li, task, opts);
+  });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
