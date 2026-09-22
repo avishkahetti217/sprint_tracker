@@ -476,10 +476,51 @@ function renderTaskItem(task, opts) {
 
   li.appendChild(row);
 
+  if (opts.showCompleteButton && task.status !== 'done') {
+    li.appendChild(renderQuickLogForm(task, opts));
+  }
+
   const subtasksSection = renderSubtasksSection(task, opts);
   if (subtasksSection) li.appendChild(subtasksSection);
 
   return li;
+}
+
+// Lets an open task be completed by entering how long it took directly on
+// its row, as an alternative to the "Done" button (which uses the current
+// time) or opening the full ✎ edit form.
+function renderQuickLogForm(task, opts) {
+  const form = document.createElement('form');
+  form.className = 'quick-log-form';
+  form.innerHTML = `
+    <span class="quick-log-label">or log time spent</span>
+    <div class="duration-inputs">
+      <input type="number" name="hours" min="0" step="1" placeholder="0" /><span>h</span>
+      <input type="number" name="minutes" min="0" max="59" step="1" placeholder="0" /><span>m</span>
+    </div>
+    <button type="submit">Log</button>
+  `;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const hours = Number(form.elements.hours.value) || 0;
+    const minutes = Number(form.elements.minutes.value) || 0;
+    const totalMinutes = hours * 60 + minutes;
+    if (totalMinutes <= 0) return;
+
+    const start = new Date(task.start_time);
+    const end = new Date(start.getTime() + totalMinutes * 60000);
+
+    await fetch(`/api/tasks/${task.id}/times`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_time: task.start_time, end_time: end.toISOString() }),
+    });
+
+    if (opts.onChange) opts.onChange();
+  });
+
+  return form;
 }
 
 // Bulleted list of the sub-tasks attended during a task's time slot, plus an

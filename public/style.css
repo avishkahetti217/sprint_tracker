@@ -40,6 +40,19 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea { font-family: inherit; }
+
+input[type="checkbox"] { accent-color: var(--accent); }
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 header {
@@ -49,6 +62,7 @@ header {
   padding: 16px 24px;
   background: var(--card);
   border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 header h1 { font-size: 18px; margin: 0; }
@@ -67,7 +81,10 @@ nav { display: flex; gap: 8px; }
   cursor: pointer;
   font-size: 15px;
   line-height: 1;
+  transition: border-color 0.12s ease, color 0.12s ease;
 }
+
+.theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
 .tab {
   border: 1px solid var(--border);
@@ -77,7 +94,10 @@ nav { display: flex; gap: 8px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  transition: border-color 0.12s ease, color 0.12s ease, background-color 0.12s ease;
 }
+
+.tab:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
 
 .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
 
@@ -99,7 +119,12 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 14px;
+  background: var(--card);
+  color: var(--text);
+  transition: border-color 0.12s ease;
 }
+
+#date-picker:hover { border-color: var(--accent); }
 
 .sprint-badge {
   font-size: 13px;
@@ -119,7 +144,7 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .goals-panel {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 14px 16px;
   margin-bottom: 20px;
 }
@@ -145,8 +170,13 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 0;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 6px;
+  transition: background-color 0.12s ease;
 }
+
+.goal-item:hover { background: var(--bg); }
 
 .goal-item input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
 
@@ -161,6 +191,8 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--card);
+  color: var(--text);
 }
 
 .add-goal-form button {
@@ -171,19 +203,34 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
+  transition: filter 0.12s ease;
 }
+
+.add-goal-form button:hover { filter: brightness(1.08); }
 
 .task-list { list-style: none; padding: 0; margin: 0 0 16px 0; }
 
 .task-item {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
-.task-item.done { opacity: 0.75; }
+.task-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.task-item.done {
+  background: color-mix(in srgb, var(--done) 5%, var(--card));
+  border-left-color: color-mix(in srgb, var(--done) 55%, transparent);
+}
+
+.task-item.done:hover { box-shadow: none; }
 
 .task-row {
   display: flex;
@@ -192,13 +239,13 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   flex-wrap: wrap;
 }
 
-.task-desc { flex: 1; font-size: 15px; min-width: 120px; }
-.task-item.done .task-desc { text-decoration: line-through; color: var(--muted); }
+.task-desc { flex: 1; font-size: 15px; font-weight: 500; min-width: 120px; }
+.task-item.done .task-desc { text-decoration: line-through; font-weight: 400; color: var(--muted); }
 
 .task-category-badge {
   font-size: 11px;
   font-weight: 600;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
   white-space: nowrap;
@@ -206,33 +253,82 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 
 .task-time { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
-.task-status-done { font-size: 12px; color: var(--done); font-weight: 600; white-space: nowrap; }
+.task-status-done {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--done);
+  background: color-mix(in srgb, var(--done) 14%, transparent);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
 
 .btn-complete {
   border: none;
   background: var(--accent);
   color: white;
-  padding: 6px 12px;
+  padding: 6px 14px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
+  font-weight: 600;
+  transition: filter 0.12s ease;
 }
 
+.btn-complete:hover { filter: brightness(1.08); }
+
 .btn-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   border: none;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   font-size: 16px;
-  padding: 0 4px;
+  border-radius: 6px;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-.subtasks-section { margin-top: 8px; }
+.btn-delete:hover { background: color-mix(in srgb, #d64545 14%, transparent); color: #d64545; }
+
+.subtasks-section {
+  margin-top: 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+.quick-log-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  flex-wrap: wrap;
+}
+
+.quick-log-label { font-size: 12px; color: var(--muted); }
+
+.quick-log-form button {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--accent);
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: border-color 0.12s ease;
+}
+
+.quick-log-form button:hover { border-color: var(--accent); }
 
 .subtask-list {
   list-style: disc;
   margin: 0 0 6px 0;
-  padding-left: 20px;
+  padding-left: 18px;
 }
 
 .subtask-item {
@@ -269,7 +365,10 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
+  transition: border-color 0.12s ease;
 }
+
+.add-subtask-form button:hover { border-color: var(--accent); }
 
 .add-task-form {
   display: flex;
@@ -299,15 +398,21 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  transition: filter 0.12s ease;
 }
+
+.add-task-form button:hover { filter: brightness(1.08); }
 
 .sprint-card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   margin-bottom: 12px;
   overflow: hidden;
+  transition: border-color 0.15s ease;
 }
+
+.sprint-card:hover { border-color: color-mix(in srgb, var(--accent) 20%, var(--border)); }
 
 .sprint-summary {
   display: flex;
@@ -315,7 +420,10 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   gap: 12px;
   padding: 14px 16px;
   cursor: pointer;
+  transition: background-color 0.12s ease;
 }
+
+.sprint-summary:hover { background: var(--bg); }
 
 .sprint-summary .title { font-weight: 600; }
 .sprint-summary .range { color: var(--muted); font-size: 13px; }
@@ -335,7 +443,13 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   color: var(--muted);
   cursor: pointer;
   user-select: none;
+  padding: 4px 8px;
+  margin: 0 -8px;
+  border-radius: 6px;
+  transition: background-color 0.12s ease;
 }
+
+.day-block-header:hover { background: var(--bg); }
 
 .day-block-header .date { font-weight: 600; color: var(--text); }
 
@@ -362,7 +476,10 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  transition: filter 0.12s ease;
 }
+
+#export-csv-btn:hover:not(:disabled) { filter: brightness(1.08); }
 
 #export-csv-btn:disabled {
   background: var(--border);
@@ -377,13 +494,21 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 }
 
 .btn-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   border: none;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   font-size: 14px;
-  padding: 0 4px;
+  border-radius: 6px;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
+
+.btn-edit:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
 .edit-times-form {
   display: flex;
@@ -421,9 +546,14 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   gap: 4px;
 }
 
-.duration-inputs input[name="durationHours"],
-.duration-inputs input[name="durationMinutes"] {
+.duration-inputs input[type="number"] {
   width: 48px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--text);
 }
 
 .duration-inputs span {
@@ -442,8 +572,11 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   font-size: 13px;
 }
 
+.edit-times-form button { transition: filter 0.12s ease, color 0.12s ease; }
 .edit-times-form button[type="submit"] { background: var(--accent); color: white; }
+.edit-times-form button[type="submit"]:hover { filter: brightness(1.08); }
 .edit-times-form button.cancel { background: transparent; color: var(--muted); }
+.edit-times-form button.cancel:hover { color: var(--text); }
 
 .edit-error { color: #d64545; font-size: 12px; flex-basis: 100%; }
 
@@ -474,8 +607,11 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   font-size: 13px;
 }
 
+.sprint-number-form button { transition: filter 0.12s ease, color 0.12s ease; }
 .sprint-number-form button[type="submit"] { background: var(--accent); color: white; }
+.sprint-number-form button[type="submit"]:hover { filter: brightness(1.08); }
 .sprint-number-form button.cancel { background: transparent; color: var(--muted); }
+.sprint-number-form button.cancel:hover { color: var(--text); }
 
 .stats-toolbar {
   display: flex;
@@ -498,6 +634,8 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--card);
+  color: var(--text);
 }
 
 .stats-presets { display: flex; gap: 8px; margin-left: auto; }
@@ -524,10 +662,13 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .stats-stat {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 12px 16px;
   min-width: 120px;
+  transition: border-color 0.15s ease;
 }
+
+.stats-stat:hover { border-color: color-mix(in srgb, var(--accent) 20%, var(--border)); }
 
 .stats-stat .value { font-size: 20px; font-weight: 700; }
 .stats-stat .label { font-size: 12px; color: var(--muted); }
@@ -543,7 +684,7 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .stats-categories {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 16px;
 }
 
@@ -618,7 +759,7 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .calendar-panel {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 14px 16px;
   margin-bottom: 20px;
 }
@@ -648,8 +789,10 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   cursor: pointer;
   font-size: 13px;
   line-height: 1;
+  transition: border-color 0.12s ease, color 0.12s ease;
 }
 
+.calendar-refresh-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .calendar-refresh-btn:disabled { opacity: 0.5; cursor: default; }
 
 .calendar-events-list { list-style: none; padding: 0; margin: 0; }
@@ -702,7 +845,10 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  transition: filter 0.12s ease;
 }
+
+.add-note-form button:hover { filter: brightness(1.08); }
 
 .note-save-status { margin-top: 10px; font-size: 13px; }
 .note-save-status.success { color: var(--done); }
@@ -711,7 +857,7 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .integration-card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 20px;
   max-width: 560px;
 }
@@ -749,7 +895,10 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  transition: filter 0.12s ease;
 }
+
+.integration-form button[type="submit"]:hover { filter: brightness(1.08); }
 
 .disconnect-btn {
   border: 1px solid var(--border);
@@ -759,7 +908,10 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  transition: background-color 0.12s ease;
 }
+
+.disconnect-btn:hover { background: color-mix(in srgb, #d64545 10%, transparent); }
 
 .integration-status {
   margin-top: 14px;
