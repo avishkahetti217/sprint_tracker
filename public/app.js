@@ -205,6 +205,8 @@ async function loadDay() {
   return data;
 }
 
+let completedSectionOpen = false;
+
 function renderDay(data) {
   const sprintLabel = data.sprint.sprint_number
     ? `Sprint ${data.sprint.sprint_number} · ${data.sprint.start_date} → ${data.sprint.end_date}`
@@ -220,21 +222,59 @@ function renderDay(data) {
   // Cancelled meetings are kept in the database (so a resync doesn't recreate
   // them) but shouldn't clutter the visible list.
   const visibleTasks = data.tasks.filter((t) => t.status !== 'cancelled');
+  const activeTasks = visibleTasks.filter((t) => t.status !== 'done');
+  const completedTasks = visibleTasks.filter((t) => t.status === 'done');
 
-  if (visibleTasks.length === 0) {
+  if (activeTasks.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty-state';
     li.textContent = 'No tasks yet for this day.';
     list.appendChild(li);
-    return;
+  } else {
+    // Newest task first, so the most recent addition lands at the top of the page.
+    [...activeTasks].reverse().forEach((task) =>
+      list.appendChild(
+        renderTaskItem(task, { showCompleteButton: true, showEditButton: true, showDeleteButton: true, onChange: loadDay })
+      )
+    );
   }
 
-  // Newest task first, so the most recent addition lands at the top of the page.
-  [...visibleTasks].reverse().forEach((task) =>
+  renderCompletedSection(completedTasks);
+}
+
+// Completed tasks live in their own collapsed-by-default section, out of the
+// way of the active list. Stays collapsed/expanded across re-renders since
+// completedSectionOpen persists independently of the fetched data.
+function renderCompletedSection(completedTasks) {
+  const container = document.getElementById('completed-section');
+  container.innerHTML = '';
+  if (completedTasks.length === 0) return;
+
+  const section = document.createElement('div');
+  section.className = 'completed-section' + (completedSectionOpen ? ' open' : '');
+
+  const header = document.createElement('div');
+  header.className = 'completed-section-header';
+  header.innerHTML = `<span>Completed (${completedTasks.length})</span><span class="completed-section-toggle">${completedSectionOpen ? '▾' : '▸'}</span>`;
+  header.addEventListener('click', () => {
+    completedSectionOpen = !completedSectionOpen;
+    renderCompletedSection(completedTasks);
+  });
+  section.appendChild(header);
+
+  const content = document.createElement('div');
+  content.className = 'completed-section-content';
+  const list = document.createElement('ul');
+  list.className = 'task-list';
+  [...completedTasks].reverse().forEach((task) =>
     list.appendChild(
       renderTaskItem(task, { showCompleteButton: true, showEditButton: true, showDeleteButton: true, onChange: loadDay })
     )
   );
+  content.appendChild(list);
+  section.appendChild(content);
+
+  container.appendChild(section);
 }
 
 function renderGoals(goals) {
