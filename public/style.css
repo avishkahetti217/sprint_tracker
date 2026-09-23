@@ -87,6 +87,9 @@ nav { display: flex; gap: 8px; }
 .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
 .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--muted);
@@ -95,6 +98,21 @@ nav { display: flex; gap: 8px; }
   cursor: pointer;
   font-size: 14px;
   transition: border-color 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #d64545;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .tab:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
@@ -888,6 +906,241 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .note-save-status { margin-top: 10px; font-size: 13px; }
 .note-save-status.success { color: var(--done); }
 .note-save-status.error { color: #d64545; }
+
+.due-today-panel {
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, #d64545 35%, var(--border));
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.due-today-panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #d64545;
+}
+
+.due-today-table { width: 100%; border-collapse: collapse; }
+
+.due-today-table td {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.due-today-table tr:first-child td { border-top: none; }
+
+.due-today-table td:first-child { width: 24px; }
+
+.due-today-text { color: var(--text); }
+
+.due-today-objective {
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 12px;
+}
+
+.add-objective-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.add-objective-form input[type="text"] {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.add-objective-form button {
+  border: none;
+  background: var(--accent);
+  color: white;
+  padding: 10px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: filter 0.12s ease;
+}
+
+.add-objective-form button:hover { filter: brightness(1.08); }
+
+.objective-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.objective-card:hover { border-color: color-mix(in srgb, var(--accent) 20%, var(--border)); }
+
+.objective-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  flex-wrap: wrap;
+  transition: background-color 0.12s ease;
+}
+
+.objective-header:hover { background: var(--bg); }
+
+.objective-title { flex: 1; font-weight: 600; font-size: 15px; min-width: 140px; }
+
+.objective-status-select {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--card);
+  cursor: pointer;
+}
+
+.objective-status-select.status-to-do { color: var(--muted); }
+.objective-status-select.status-in-progress {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.objective-status-select.status-done {
+  color: var(--done);
+  border-color: color-mix(in srgb, var(--done) 45%, var(--border));
+}
+
+.objective-priority-select {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--card);
+  cursor: pointer;
+}
+
+.objective-priority-select.priority-high {
+  color: #d64545;
+  border-color: color-mix(in srgb, #d64545 45%, var(--border));
+}
+.objective-priority-select.priority-medium {
+  color: #f59f00;
+  border-color: color-mix(in srgb, #f59f00 45%, var(--border));
+}
+.objective-priority-select.priority-low { color: var(--muted); }
+
+.objective-summary { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+.objective-body { display: none; padding: 0 16px 16px 16px; }
+.objective-card.open .objective-body { display: block; }
+
+.objective-subsection {
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.objective-subsection:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+
+.objective-subsection h4 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.objective-updates-list,
+.objective-decisions-list,
+.objective-subtasks-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px 0;
+}
+
+.objective-update-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.objective-update-date { color: var(--muted); font-size: 12px; white-space: nowrap; min-width: 70px; }
+.objective-update-text { flex: 1; }
+
+.objective-decision-item,
+.objective-subtask-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.objective-decision-item.resolved .objective-decision-text,
+.objective-subtask-item.done .objective-subtask-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.objective-decision-text, .objective-subtask-text { flex: 1; }
+
+.objective-subtask-due { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.objective-subtask-item.overdue .objective-subtask-due { color: #d64545; font-weight: 600; }
+
+.add-objective-update-form,
+.add-objective-decision-form,
+.add-objective-subtask-form {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.add-objective-update-form input,
+.add-objective-decision-form input,
+.add-objective-subtask-form input {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.add-objective-update-form input[name="text"],
+.add-objective-decision-form input,
+.add-objective-subtask-form input[name="text"] {
+  flex: 1;
+  min-width: 120px;
+}
+
+.add-objective-update-form button,
+.add-objective-decision-form button,
+.add-objective-subtask-form button {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--accent);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.12s ease;
+}
+
+.add-objective-update-form button:hover,
+.add-objective-decision-form button:hover,
+.add-objective-subtask-form button:hover { border-color: var(--accent); }
 
 .integration-card {
   background: var(--card);

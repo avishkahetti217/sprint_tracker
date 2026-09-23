@@ -178,6 +178,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     if (btn.dataset.tab === 'sprints') loadSprints();
     if (btn.dataset.tab === 'stats') initStats();
     if (btn.dataset.tab === 'notes') initNotesTab();
+    if (btn.dataset.tab === 'objectives') initObjectives();
     if (btn.dataset.tab === 'integrations') loadIntegrationStatus();
   });
 });
@@ -1147,6 +1148,505 @@ document.getElementById('integration-disconnect-btn').addEventListener('click', 
   renderIntegrationStatus({ icsUrl: null });
 });
 
+// ---------- Objectives ----------
+//
+// Longer-running goals tracked over many days — distinct from the "Goals for
+// the day" checklist on the Today view. Each has a status, a dated progress
+// log, pending decisions, and sub-tasks with their own "complete by" date.
+
+let objectiveStatuses = [];
+let objectivePriorities = [];
+let objectiveStatusesLoaded = false;
+const openObjectiveIds = new Set();
+let completedObjectivesOpen = false;
+
+async function initObjectives() {
+  if (!objectiveStatusesLoaded) {
+    objectiveStatusesLoaded = true;
+    const [statusesRes, prioritiesRes] = await Promise.all([
+      fetch('/api/objective-statuses'),
+      fetch('/api/objective-priorities'),
+    ]);
+    objectiveStatuses = await statusesRes.json();
+    objectivePriorities = await prioritiesRes.json();
+  }
+  loadObjectives();
+}
+
+async function loadObjectives() {
+  const res = await fetch('/api/objectives');
+  const objectives = await res.json();
+  updateObjectivesTabBadge(objectives);
+  renderObjectivesView(objectives);
+}
+
+// Fetches just enough to keep the tab badge current even if the user hasn't
+// opened the Objectives tab yet this session (e.g. right after page load).
+async function refreshObjectivesBadge() {
+  const res = await fetch('/api/objectives');
+  const objectives = await res.json();
+  updateObjectivesTabBadge(objectives);
+}
+
+// Pending sub-tasks due today, across any set of objectives (Done ones are
+// always excluded — an objective that's finished has nothing left "due").
+function computeDueTodaySubtasks(objectives) {
+  const todayStr = todayKey();
+  const dueToday = [];
+  objectives
+    .filter((o) => o.status !== 'Done')
+    .forEach((o) => {
+      o.subtasks.forEach((s) => {
+        if (!s.done && s.due_date === todayStr) {
+          dueToday.push({ subtask: s, objectiveTitle: o.title });
+        }
+      });
+    });
+  return dueToday;
+}
+
+function updateObjectivesTabBadge(objectives) {
+  const count = computeDueTodaySubtasks(objectives).length;
+  const badge = document.getElementById('objectives-due-badge');
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+}
+
+// Pending sub-tasks (across all active objectives) due today, gathered into
+// one glanceable table so nothing due today is buried inside a collapsed card.
+function renderDueTodaySection(activeObjectives) {
+  const container = document.getElementById('objectives-due-today');
+  container.innerHTML = '';
+
+  const dueToday = computeDueTodaySubtasks(activeObjectives);
+
+  if (dueToday.length === 0) return;
+
+  const panel = document.createElement('div');
+  panel.className = 'due-today-panel';
+
+  const heading = document.createElement('h3');
+  heading.textContent = `Due today (${dueToday.length})`;
+  panel.appendChild(heading);
+
+  const table = document.createElement('table');
+  table.className = 'due-today-table';
+  const tbody = document.createElement('tbody');
+
+  dueToday.forEach(({ subtask, objectiveTitle }) => {
+    const row = document.createElement('tr');
+
+    const checkboxCell = document.createElement('td');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.addEventListener('change', async () => {
+      await fetch(`/api/objective-subtasks/${subtask.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done: checkbox.checked }),
+      });
+      loadObjectives();
+    });
+    checkboxCell.appendChild(checkbox);
+    row.appendChild(checkboxCell);
+
+    const textCell = document.createElement('td');
+    textCell.className = 'due-today-text';
+    textCell.textContent = subtask.text;
+    row.appendChild(textCell);
+
+    const objCell = document.createElement('td');
+    objCell.className = 'due-today-objective';
+    objCell.textContent = objectiveTitle;
+    row.appendChild(objCell);
+
+    tbody.appendChild(row);
+  });
+
+  table.appendChild(tbody);
+  panel.appendChild(table);
+  container.appendChild(panel);
+}
+
+function renderObjectivesView(objectives) {
+  const active = objectives.filter((o) => o.status !== 'Done');
+  const completed = objectives.filter((o) => o.status === 'Done');
+
+  renderDueTodaySection(active);
+
+  const activeContainer = document.getElementById('objectives-active');
+  activeContainer.innerHTML = '';
+  if (active.length === 0) {
+    activeContainer.innerHTML = '<div class="empty-state">No objectives yet — add one above.</div>';
+  } else {
+    active.forEach((o) => activeContainer.appendChild(renderObjectiveCard(o)));
+  }
+
+  renderCompletedObjectivesSection(completed);
+}
+
+function renderCompletedObjectivesSection(completed) {
+  const container = document.getElementById('objectives-completed-section');
+  container.innerHTML = '';
+  if (completed.length === 0) return;
+
+  const section = document.createElement('div');
+  section.className = 'completed-section' + (completedObjectivesOpen ? ' open' : '');
+
+  const header = document.createElement('div');
+  header.className = 'completed-section-header';
+  header.innerHTML = `<span>Completed (${completed.length})</span><span class="completed-section-toggle">${completedObjectivesOpen ? '▾' : '▸'}</span>`;
+  header.addEventListener('click', () => {
+    completedObjectivesOpen = !completedObjectivesOpen;
+    renderCompletedObjectivesSection(completed);
+  });
+  section.appendChild(header);
+
+  const content = document.createElement('div');
+  content.className = 'completed-section-content';
+  completed.forEach((o) => content.appendChild(renderObjectiveCard(o)));
+  section.appendChild(content);
+
+  container.appendChild(section);
+}
+
+function renderObjectiveCard(objective) {
+  const card = document.createElement('div');
+  card.className = 'objective-card' + (openObjectiveIds.has(objective.id) ? ' open' : '');
+
+  const header = document.createElement('div');
+  header.className = 'objective-header';
+  header.addEventListener('click', () => {
+    if (openObjectiveIds.has(objective.id)) openObjectiveIds.delete(objective.id);
+    else openObjectiveIds.add(objective.id);
+    card.classList.toggle('open');
+  });
+
+  const title = document.createElement('span');
+  title.className = 'objective-title';
+  title.textContent = objective.title;
+  header.appendChild(title);
+
+  const prioritySelect = document.createElement('select');
+  prioritySelect.className = 'objective-priority-select priority-' + objective.priority.toLowerCase();
+  objectivePriorities.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    if (p === objective.priority) opt.selected = true;
+    prioritySelect.appendChild(opt);
+  });
+  prioritySelect.addEventListener('click', (e) => e.stopPropagation());
+  prioritySelect.addEventListener('change', async () => {
+    await fetch(`/api/objectives/${objective.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority: prioritySelect.value }),
+    });
+    loadObjectives();
+  });
+  header.appendChild(prioritySelect);
+
+  const statusSelect = document.createElement('select');
+  statusSelect.className = 'objective-status-select status-' + objective.status.toLowerCase().replace(/\s+/g, '-');
+  objectiveStatuses.forEach((s) => {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s;
+    if (s === objective.status) opt.selected = true;
+    statusSelect.appendChild(opt);
+  });
+  statusSelect.addEventListener('click', (e) => e.stopPropagation());
+  statusSelect.addEventListener('change', async () => {
+    await fetch(`/api/objectives/${objective.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: statusSelect.value }),
+    });
+    loadObjectives();
+  });
+  header.appendChild(statusSelect);
+
+  const openSubtasks = objective.subtasks.filter((s) => !s.done).length;
+  const openDecisions = objective.decisions.filter((d) => !d.resolved).length;
+  const summaryBits = [];
+  if (openSubtasks > 0) summaryBits.push(`${openSubtasks} subtask${openSubtasks > 1 ? 's' : ''}`);
+  if (openDecisions > 0) summaryBits.push(`${openDecisions} decision${openDecisions > 1 ? 's' : ''}`);
+  if (summaryBits.length > 0) {
+    const summary = document.createElement('span');
+    summary.className = 'objective-summary';
+    summary.textContent = summaryBits.join(' · ');
+    header.appendChild(summary);
+  }
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn-delete';
+  deleteBtn.textContent = '×';
+  deleteBtn.title = 'Delete objective';
+  deleteBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await fetch(`/api/objectives/${objective.id}`, { method: 'DELETE' });
+    loadObjectives();
+  });
+  header.appendChild(deleteBtn);
+
+  card.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'objective-body';
+  body.appendChild(renderObjectiveUpdatesSection(objective));
+  body.appendChild(renderObjectiveDecisionsSection(objective));
+  body.appendChild(renderObjectiveSubtasksSection(objective));
+  card.appendChild(body);
+
+  return card;
+}
+
+function renderObjectiveUpdatesSection(objective) {
+  const section = document.createElement('div');
+  section.className = 'objective-subsection';
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'Progress updates';
+  section.appendChild(heading);
+
+  if (objective.updates.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'No updates yet.';
+    section.appendChild(empty);
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'objective-updates-list';
+    objective.updates.forEach((u) => {
+      const item = document.createElement('li');
+      item.className = 'objective-update-item';
+
+      const date = document.createElement('span');
+      date.className = 'objective-update-date';
+      date.textContent = formatDateLabel(u.date);
+      item.appendChild(date);
+
+      const text = document.createElement('span');
+      text.className = 'objective-update-text';
+      text.textContent = u.text;
+      item.appendChild(text);
+
+      const del = document.createElement('button');
+      del.className = 'btn-delete';
+      del.textContent = '×';
+      del.title = 'Delete update';
+      del.addEventListener('click', async () => {
+        await fetch(`/api/objective-updates/${u.id}`, { method: 'DELETE' });
+        loadObjectives();
+      });
+      item.appendChild(del);
+
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+  }
+
+  const form = document.createElement('form');
+  form.className = 'add-objective-update-form';
+  form.innerHTML = `
+    <input type="date" name="date" value="${todayKey()}" required />
+    <input type="text" name="text" placeholder="What happened today?" required />
+    <button type="submit">Add</button>
+  `;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const date = form.elements.date.value;
+    const text = form.elements.text.value.trim();
+    if (!date || !text) return;
+    await fetch(`/api/objectives/${objective.id}/updates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, text }),
+    });
+    loadObjectives();
+  });
+  section.appendChild(form);
+
+  return section;
+}
+
+function renderObjectiveDecisionsSection(objective) {
+  const section = document.createElement('div');
+  section.className = 'objective-subsection';
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'Pending decisions';
+  section.appendChild(heading);
+
+  if (objective.decisions.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'No pending decisions.';
+    section.appendChild(empty);
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'objective-decisions-list';
+    objective.decisions.forEach((d) => {
+      const item = document.createElement('li');
+      item.className = 'objective-decision-item' + (d.resolved ? ' resolved' : '');
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !!d.resolved;
+      checkbox.addEventListener('change', async () => {
+        await fetch(`/api/objective-decisions/${d.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resolved: checkbox.checked }),
+        });
+        loadObjectives();
+      });
+      item.appendChild(checkbox);
+
+      const text = document.createElement('span');
+      text.className = 'objective-decision-text';
+      text.textContent = d.text;
+      item.appendChild(text);
+
+      const del = document.createElement('button');
+      del.className = 'btn-delete';
+      del.textContent = '×';
+      del.title = 'Delete decision';
+      del.addEventListener('click', async () => {
+        await fetch(`/api/objective-decisions/${d.id}`, { method: 'DELETE' });
+        loadObjectives();
+      });
+      item.appendChild(del);
+
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+  }
+
+  const form = document.createElement('form');
+  form.className = 'add-objective-decision-form';
+  form.innerHTML = `
+    <input type="text" placeholder="A decision that needs to be made..." required />
+    <button type="submit">Add</button>
+  `;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = form.querySelector('input');
+    const text = input.value.trim();
+    if (!text) return;
+    await fetch(`/api/objectives/${objective.id}/decisions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    loadObjectives();
+  });
+  section.appendChild(form);
+
+  return section;
+}
+
+function renderObjectiveSubtasksSection(objective) {
+  const section = document.createElement('div');
+  section.className = 'objective-subsection';
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'Sub-tasks';
+  section.appendChild(heading);
+
+  if (objective.subtasks.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'No sub-tasks yet.';
+    section.appendChild(empty);
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'objective-subtasks-list';
+    const todayStr = todayKey();
+    objective.subtasks.forEach((s) => {
+      const item = document.createElement('li');
+      const overdue = !s.done && s.due_date < todayStr;
+      item.className = 'objective-subtask-item' + (s.done ? ' done' : '') + (overdue ? ' overdue' : '');
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !!s.done;
+      checkbox.addEventListener('change', async () => {
+        await fetch(`/api/objective-subtasks/${s.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ done: checkbox.checked }),
+        });
+        loadObjectives();
+      });
+      item.appendChild(checkbox);
+
+      const text = document.createElement('span');
+      text.className = 'objective-subtask-text';
+      text.textContent = s.text;
+      item.appendChild(text);
+
+      const due = document.createElement('span');
+      due.className = 'objective-subtask-due';
+      due.textContent = `by ${formatDateLabel(s.due_date)}`;
+      item.appendChild(due);
+
+      const del = document.createElement('button');
+      del.className = 'btn-delete';
+      del.textContent = '×';
+      del.title = 'Delete sub-task';
+      del.addEventListener('click', async () => {
+        await fetch(`/api/objective-subtasks/${s.id}`, { method: 'DELETE' });
+        loadObjectives();
+      });
+      item.appendChild(del);
+
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+  }
+
+  const form = document.createElement('form');
+  form.className = 'add-objective-subtask-form';
+  form.innerHTML = `
+    <input type="text" name="text" placeholder="A step to complete..." required />
+    <input type="date" name="dueDate" required />
+    <button type="submit">Add</button>
+  `;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = form.elements.text.value.trim();
+    const dueDate = form.elements.dueDate.value;
+    if (!text || !dueDate) return;
+    await fetch(`/api/objectives/${objective.id}/subtasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, due_date: dueDate }),
+    });
+    loadObjectives();
+  });
+  section.appendChild(form);
+
+  return section;
+}
+
+document.getElementById('add-objective-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('objective-title');
+  const title = input.value.trim();
+  if (!title) return;
+  await fetch('/api/objectives', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+  input.value = '';
+  loadObjectives();
+});
+
 // ---------- Init ----------
 
 loadDay();
+refreshObjectivesBadge();
+setInterval(refreshObjectivesBadge, 5 * 60 * 1000);

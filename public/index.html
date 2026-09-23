@@ -12,6 +12,7 @@
     <div class="header-right">
       <nav>
         <button id="tab-today" class="tab active" data-tab="today">Today</button>
+        <button id="tab-objectives" class="tab" data-tab="objectives">Objectives<span id="objectives-due-badge" class="tab-badge" hidden>0</span></button>
         <button id="tab-sprints" class="tab" data-tab="sprints">Sprints</button>
         <button id="tab-stats" class="tab" data-tab="stats">Statistics</button>
         <button id="tab-notes" class="tab" data-tab="notes">Notes</button>
@@ -92,6 +93,18 @@
         <button type="submit">Add note</button>
       </form>
       <div id="note-save-status" class="note-save-status"></div>
+    </section>
+
+    <section id="view-objectives" class="view">
+      <div id="objectives-due-today"></div>
+
+      <form id="add-objective-form" class="add-objective-form">
+        <input type="text" id="objective-title" placeholder="A goal you're chasing..." required />
+        <button type="submit">Add objective</button>
+      </form>
+
+      <div id="objectives-active"></div>
+      <div id="objectives-completed-section"></div>
     </section>
 
     <section id="view-integrations" class="view">

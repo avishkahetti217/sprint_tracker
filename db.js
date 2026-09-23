@@ -62,6 +62,39 @@ db.exec(`
     position INTEGER NOT NULL,
     created_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS objectives (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'To Do',
+    priority TEXT NOT NULL DEFAULT 'Medium',
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS objective_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    objective_id INTEGER NOT NULL REFERENCES objectives(id),
+    date TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS objective_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    objective_id INTEGER NOT NULL REFERENCES objectives(id),
+    text TEXT NOT NULL,
+    resolved INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS objective_subtasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    objective_id INTEGER NOT NULL REFERENCES objectives(id),
+    text TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
 `);
 
 // Migration: sprints used to be identified/looked-up by an auto-numbered
@@ -112,6 +145,12 @@ if (taskColumns.includes('comment')) {
     insertSubtask.run(t.id, t.comment.trim(), now);
   }
   db.exec('ALTER TABLE tasks DROP COLUMN comment');
+}
+
+// Migration: `priority` was added to objectives after the initial release.
+const objectiveColumns = db.prepare('PRAGMA table_info(objectives)').all().map((c) => c.name);
+if (!objectiveColumns.includes('priority')) {
+  db.exec("ALTER TABLE objectives ADD COLUMN priority TEXT NOT NULL DEFAULT 'Medium'");
 }
 
 // One-time seed: carry over an existing GOOGLE_CALENDAR_ICS_URL from .env into the
