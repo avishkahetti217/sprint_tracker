@@ -30,6 +30,14 @@
         <div id="day-total" class="day-total"></div>
       </div>
 
+      <form id="add-task-form" class="add-task-form">
+        <input type="text" id="task-description" placeholder="What are you working on?" required />
+        <select id="task-category" class="task-category-select"></select>
+        <button type="submit">Add task</button>
+      </form>
+
+      <div id="objective-deadlines-panel"></div>
+
       <div class="goals-panel">
         <h3>Goals for the day <span id="goals-complete-badge" class="goals-complete-badge" hidden>😊</span></h3>
         <ul id="goals-list" class="goals-list"></ul>
@@ -47,12 +55,6 @@
         <ul id="calendar-events-list" class="calendar-events-list"></ul>
         <div id="calendar-updated" class="calendar-updated"></div>
       </div>
-
-      <form id="add-task-form" class="add-task-form">
-        <input type="text" id="task-description" placeholder="What are you working on?" required />
-        <select id="task-category" class="task-category-select"></select>
-        <button type="submit">Add task</button>
-      </form>
 
       <ul id="task-list" class="task-list"></ul>
 
@@ -103,6 +105,13 @@
         <button type="submit">Add objective</button>
       </form>
 
+      <div class="objectives-column-header">
+        <span></span>
+        <span>Priority</span>
+        <span>Status</span>
+        <span></span>
+        <span></span>
+      </div>
       <div id="objectives-active"></div>
       <div id="objectives-completed-section"></div>
     </section>

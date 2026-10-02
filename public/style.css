@@ -6,6 +6,7 @@
   --muted: #6b7280;
   --accent: #3b5bdb;
   --done: #2f9e44;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -19,6 +20,7 @@
     --muted: #9aa1ac;
     --accent: #6f93ff;
     --done: #51cf66;
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239aa1ac' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     color-scheme: dark;
   }
 }
@@ -31,6 +33,7 @@
   --muted: #9aa1ac;
   --accent: #6f93ff;
   --done: #51cf66;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239aa1ac' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   color-scheme: dark;
 }
 
@@ -114,6 +117,8 @@ nav { display: flex; gap: 8px; }
   font-weight: 700;
   line-height: 1;
 }
+
+.tab-badge[hidden] { display: none; }
 
 .tab:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
 
@@ -508,6 +513,39 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 
 .day-block-content { display: none; margin-top: 8px; }
 .day-block.open .day-block-content { display: block; }
+
+.add-day-task-form {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.add-day-task-form input[type="text"],
+.add-day-task-form select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.add-day-task-form input[type="text"] { flex: 2; min-width: 160px; }
+.add-day-task-form select { flex: 1; min-width: 120px; }
+
+.add-day-task-form button {
+  border: none;
+  background: var(--accent);
+  color: white;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: filter 0.12s ease;
+}
+
+.add-day-task-form button:hover { filter: brightness(1.08); }
 
 .empty-state { color: var(--muted); font-size: 14px; padding: 24px 0; text-align: center; }
 
@@ -945,6 +983,76 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   padding-left: 12px;
 }
 
+.due-today-due-cell { padding-left: 12px; white-space: nowrap; }
+
+/* Unlike the Objectives tab's "Due today" panel (always urgent by definition),
+   this one on the Today page spans a horizon of days, so the panel itself
+   stays neutral — urgency is conveyed per-row by the due-label badge instead. */
+.objective-deadlines-panel { border-color: var(--border); }
+.objective-deadlines-panel h3 { color: var(--muted); }
+
+/* Task/objective text here can run long (full sentences), so let it wrap and
+   shrink slightly rather than spilling past the panel's edge like the
+   Objectives tab's shorter "Due today" entries can get away with. */
+.objective-deadlines-panel .due-today-table td {
+  font-size: 12.5px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.objective-deadlines-panel .due-today-text { font-size: 12.5px; }
+
+.objective-deadlines-panel .due-today-objective {
+  white-space: normal;
+  font-size: 11.5px;
+  max-width: 140px;
+}
+
+.objective-deadlines-panel .due-today-due-cell {
+  white-space: normal;
+  vertical-align: top;
+  padding-top: 9px;
+}
+
+/* Caps the panel to roughly two visible rows so a long list of deadlines
+   scrolls in place instead of pushing Goals/Meetings further down the page. */
+.objective-deadlines-scroll {
+  max-height: 112px;
+  overflow-y: auto;
+}
+
+.objective-deadlines-scroll::-webkit-scrollbar { width: 6px; }
+.objective-deadlines-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.deadline-due-label {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.deadline-due-label.deadline-overdue {
+  color: #d64545;
+  background: color-mix(in srgb, #d64545 12%, transparent);
+}
+
+.deadline-due-label.deadline-today {
+  color: #d64545;
+  background: color-mix(in srgb, #d64545 10%, transparent);
+}
+
+.deadline-due-label.deadline-soon {
+  color: #f59f00;
+  background: color-mix(in srgb, #f59f00 14%, transparent);
+}
+
 .add-objective-form {
   display: flex;
   gap: 8px;
@@ -977,37 +1085,146 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .objective-card {
   background: var(--card);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
   border-radius: 10px;
   margin-bottom: 12px;
   overflow: hidden;
   transition: border-color 0.15s ease;
 }
 
-.objective-card:hover { border-color: color-mix(in srgb, var(--accent) 20%, var(--border)); }
+.objective-card.priority-high { border-left-color: #d64545; }
+.objective-card.priority-medium { border-left-color: #f59f00; }
+
+/* Only the hover-tint the right/top/bottom edges — the left edge stays the
+   priority accent color even while hovering. */
+.objective-card:hover {
+  border-top-color: color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-right-color: color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-bottom-color: color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+
+/* Same column tracks on every card header (and the label row above the list)
+   so priority/status/summary/delete land in identical positions row to row,
+   regardless of title length or which select option is currently chosen. */
+:root {
+  --objective-grid-columns: minmax(0, 1fr) 100px 112px 150px 26px;
+}
+
+.objectives-column-header {
+  display: grid;
+  grid-template-columns: var(--objective-grid-columns);
+  gap: 10px;
+  padding: 0 16px 6px 16px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.objectives-column-header span:nth-child(3),
+.objectives-column-header span:nth-child(4) {
+  text-align: right;
+}
 
 .objective-header {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: var(--objective-grid-columns);
+  align-items: start;
   gap: 10px;
   padding: 14px 16px;
   cursor: pointer;
-  flex-wrap: wrap;
   transition: background-color 0.12s ease;
 }
 
 .objective-header:hover { background: var(--bg); }
 
-.objective-title { flex: 1; font-weight: 600; font-size: 15px; min-width: 140px; }
+.objective-title-wrap {
+  grid-column: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
 
-.objective-status-select {
-  padding: 4px 10px;
+.objective-title {
+  font-weight: 600;
+  font-size: 14px;
+  padding: 2px 12px 2px 0;
+  overflow-wrap: break-word;
+}
+
+.objective-title-edit-btn { flex-shrink: 0; }
+.objective-title-edit-btn[hidden] { display: none; }
+
+.objective-title-edit-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.objective-title-edit-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.objective-title-edit-form button {
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: filter 0.12s ease, color 0.12s ease;
+}
+
+.objective-title-edit-form button[type="submit"] { background: var(--accent); color: white; }
+.objective-title-edit-form button[type="submit"]:hover { filter: brightness(1.08); }
+.objective-title-edit-form button.cancel { background: transparent; color: var(--muted); }
+.objective-title-edit-form button.cancel:hover { color: var(--text); }
+
+@media (max-width: 560px) {
+  .objectives-column-header { display: none; }
+
+  .objective-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .objective-title-wrap { flex: 1 1 100%; }
+}
+
+.objective-status-select,
+.objective-priority-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  padding: 4px 24px 4px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--card);
+  background-color: var(--card);
   cursor: pointer;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
 }
+
+.objective-status-select:hover,
+.objective-priority-select:hover { background-color: var(--bg); }
+
+.objective-status-select { grid-column: 3; justify-self: end; }
+.objective-priority-select { grid-column: 2; justify-self: start; }
 
 .objective-status-select.status-to-do { color: var(--muted); }
 .objective-status-select.status-in-progress {
@@ -1017,16 +1234,6 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .objective-status-select.status-done {
   color: var(--done);
   border-color: color-mix(in srgb, var(--done) 45%, var(--border));
-}
-
-.objective-priority-select {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--card);
-  cursor: pointer;
 }
 
 .objective-priority-select.priority-high {
@@ -1039,7 +1246,32 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 }
 .objective-priority-select.priority-low { color: var(--muted); }
 
-.objective-summary { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.objective-summary {
+  position: relative;
+  grid-column: 4;
+  justify-self: end;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.objective-summary.has-due-today::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #d64545;
+  border: 1.5px solid var(--card);
+}
+
+.objective-header > .btn-delete { grid-column: 5; justify-self: end; }
 
 .objective-body { display: none; padding: 0 16px 16px 16px; }
 .objective-card.open .objective-body { display: block; }
@@ -1053,10 +1285,11 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 .objective-subsection:first-child { border-top: none; margin-top: 0; padding-top: 0; }
 
 .objective-subsection h4 {
-  margin: 0 0 8px 0;
-  font-size: 12px;
+  margin: 0 0 10px 0;
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--muted);
 }
 
@@ -1068,11 +1301,25 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   margin: 0 0 8px 0;
 }
 
+.objective-update-item,
+.objective-decision-item,
+.objective-subtask-item {
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  transition: background-color 0.12s ease;
+}
+
+.objective-update-item:hover,
+.objective-decision-item:hover,
+.objective-subtask-item:hover {
+  background: var(--bg);
+}
+
 .objective-update-item {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 4px 0;
   font-size: 13px;
 }
 
@@ -1084,7 +1331,6 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
   font-size: 13px;
 }
 
@@ -1096,8 +1342,28 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 
 .objective-decision-text, .objective-subtask-text { flex: 1; }
 
-.objective-subtask-due { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.objective-subtask-item.overdue .objective-subtask-due { color: #d64545; font-weight: 600; }
+.objective-subtask-due {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+}
+
+.objective-subtask-item.overdue {
+  background: color-mix(in srgb, #d64545 8%, transparent);
+}
+
+.objective-subtask-item.overdue:hover {
+  background: color-mix(in srgb, #d64545 13%, transparent);
+}
+
+.objective-subtask-item.overdue .objective-subtask-due {
+  color: #d64545;
+  font-weight: 700;
+  background: color-mix(in srgb, #d64545 12%, transparent);
+}
 
 .add-objective-update-form,
 .add-objective-decision-form,

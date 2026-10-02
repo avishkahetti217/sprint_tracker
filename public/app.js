@@ -18,6 +18,7 @@ const CATEGORY_COLORS = {
   Adhoc: '#82c91e',
   Support: '#15aabf',
   'Domain learning': '#ae3ec9',
+  Documentation: '#495057',
   Uncategorized: '#868e96',
 };
 
@@ -37,6 +38,7 @@ const CATEGORY_KEYWORDS = {
   Adhoc: ['adhoc', 'ad-hoc', 'ad hoc'],
   Support: ['support', 'ticket', 'help desk'],
   'Domain learning': ['learn', 'domain learning', 'domain knowledge', 'kt session', 'knowledge transfer', 'onboarding'],
+  Documentation: ['documentation', 'document', 'docs', 'readme', 'wiki'],
 };
 
 function guessCategoryFromText(text) {
@@ -147,6 +149,19 @@ function formatDateLabel(dateKey) {
   });
 }
 
+// Phrases a sub-task's due_date relative to today, for reminder panels
+// (so "complete by" reads naturally instead of a bare date in most cases).
+function relativeDueLabel(dueDateStr) {
+  const todayDate = new Date(todayKey() + 'T00:00:00');
+  const dueDate = new Date(dueDateStr + 'T00:00:00');
+  const diffDays = Math.round((dueDate - todayDate) / 86400000);
+
+  if (diffDays < 0) return { text: `Overdue · ${formatDateLabel(dueDateStr)}`, variant: 'overdue' };
+  if (diffDays === 0) return { text: 'Due today', variant: 'today' };
+  if (diffDays === 1) return { text: 'Due tomorrow', variant: 'soon' };
+  return { text: `Due ${formatDateLabel(dueDateStr)}`, variant: 'later' };
+}
+
 function escapeAttr(str) {
   return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
@@ -204,6 +219,107 @@ async function loadDay() {
   const data = await loadDayData();
   loadCalendarEvents();
   return data;
+}
+
+// ---------- Objective deadlines reminder (shown on the Today page) ----------
+
+// Pending objective sub-tasks due soon, independent of whichever date is
+// selected on the day picker — this is a reminder of upcoming/overdue
+// objective work, not tied to a particular day's tasks.
+const OBJECTIVE_DEADLINE_HORIZON_DAYS = 7;
+
+function computeUpcomingObjectiveDeadlines(objectives) {
+  const todayDate = new Date(todayKey() + 'T00:00:00');
+  const items = [];
+  objectives
+    .filter((o) => o.status !== 'Done')
+    .forEach((o) => {
+      o.subtasks.forEach((s) => {
+        if (s.done) return;
+        const dueDate = new Date(s.due_date + 'T00:00:00');
+        const diffDays = Math.round((dueDate - todayDate) / 86400000);
+        if (diffDays <= OBJECTIVE_DEADLINE_HORIZON_DAYS) {
+          items.push({ subtask: s, objectiveTitle: o.title, diffDays });
+        }
+      });
+    });
+  items.sort((a, b) => a.diffDays - b.diffDays);
+  return items;
+}
+
+function renderObjectiveDeadlinesPanel(objectives) {
+  const container = document.getElementById('objective-deadlines-panel');
+  container.innerHTML = '';
+
+  const items = computeUpcomingObjectiveDeadlines(objectives);
+  if (items.length === 0) return;
+
+  const panel = document.createElement('div');
+  panel.className = 'due-today-panel objective-deadlines-panel';
+
+  const heading = document.createElement('h3');
+  heading.textContent = `Objective deadlines (${items.length})`;
+  panel.appendChild(heading);
+
+  const table = document.createElement('table');
+  table.className = 'due-today-table';
+  const tbody = document.createElement('tbody');
+
+  items.forEach(({ subtask, objectiveTitle }) => {
+    const row = document.createElement('tr');
+
+    const checkboxCell = document.createElement('td');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.addEventListener('change', async () => {
+      await fetch(`/api/objective-subtasks/${subtask.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done: checkbox.checked }),
+      });
+      loadObjectiveDeadlines();
+    });
+    checkboxCell.appendChild(checkbox);
+    row.appendChild(checkboxCell);
+
+    const textCell = document.createElement('td');
+    textCell.className = 'due-today-text';
+    textCell.textContent = subtask.text;
+    row.appendChild(textCell);
+
+    const dueCell = document.createElement('td');
+    dueCell.className = 'due-today-due-cell';
+    const due = relativeDueLabel(subtask.due_date);
+    const dueBadge = document.createElement('span');
+    dueBadge.className = `deadline-due-label deadline-${due.variant}`;
+    dueBadge.textContent = due.text;
+    dueCell.appendChild(dueBadge);
+    row.appendChild(dueCell);
+
+    const objCell = document.createElement('td');
+    objCell.className = 'due-today-objective';
+    objCell.textContent = objectiveTitle;
+    row.appendChild(objCell);
+
+    tbody.appendChild(row);
+  });
+
+  table.appendChild(tbody);
+
+  // Caps the panel to roughly two visible rows — the rest scroll into view
+  // instead of pushing the Goals/Meetings panels further down the page.
+  const scrollWrap = document.createElement('div');
+  scrollWrap.className = 'objective-deadlines-scroll';
+  scrollWrap.appendChild(table);
+  panel.appendChild(scrollWrap);
+
+  container.appendChild(panel);
+}
+
+async function loadObjectiveDeadlines() {
+  const res = await fetch('/api/objectives');
+  const objectives = await res.json();
+  renderObjectiveDeadlinesPanel(objectives);
 }
 
 let completedSectionOpen = false;
@@ -757,6 +873,11 @@ document.getElementById('add-task-form').addEventListener('submit', async (e) =>
 
 // ---------- Sprints view ----------
 
+// Sprint/day expand state, kept across loadSprints() re-renders (triggered by
+// edits and additions) so the view doesn't collapse back after every change.
+const openSprintIds = new Set();
+const openDayIds = new Set();
+
 async function loadSprints() {
   const res = await fetch('/api/sprints');
   const sprints = await res.json();
@@ -788,7 +909,7 @@ document.getElementById('export-csv-btn').addEventListener('click', () => {
 
 function renderSprintCard(sprint) {
   const card = document.createElement('div');
-  card.className = 'sprint-card';
+  card.className = 'sprint-card' + (openSprintIds.has(sprint.id) ? ' open' : '');
 
   const summary = document.createElement('div');
   summary.className = 'sprint-summary';
@@ -826,7 +947,11 @@ function renderSprintCard(sprint) {
   });
   summary.appendChild(editNumberBtn);
 
-  summary.addEventListener('click', () => card.classList.toggle('open'));
+  summary.addEventListener('click', () => {
+    if (openSprintIds.has(sprint.id)) openSprintIds.delete(sprint.id);
+    else openSprintIds.add(sprint.id);
+    card.classList.toggle('open');
+  });
   card.appendChild(summary);
 
   const body = document.createElement('div');
@@ -888,12 +1013,16 @@ function toggleSprintNumberForm(card, sprint) {
 
 function renderDayBlock(day) {
   const block = document.createElement('div');
-  block.className = 'day-block';
+  block.className = 'day-block' + (openDayIds.has(day.id) ? ' open' : '');
 
   const header = document.createElement('div');
   header.className = 'day-block-header';
   header.innerHTML = `<span class="date">${formatDateLabel(day.date)}</span>`;
-  header.addEventListener('click', () => block.classList.toggle('open'));
+  header.addEventListener('click', () => {
+    if (openDayIds.has(day.id)) openDayIds.delete(day.id);
+    else openDayIds.add(day.id);
+    block.classList.toggle('open');
+  });
   block.appendChild(header);
 
   const content = document.createElement('div');
@@ -911,15 +1040,47 @@ function renderDayBlock(day) {
     list.className = 'task-list';
     visibleTasks.forEach((task) =>
       list.appendChild(
-        renderTaskItem(task, { showCompleteButton: false, showDeleteButton: false, onChange: loadSprints })
+        renderTaskItem(task, { showEditButton: true, showCompleteButton: false, showDeleteButton: false, onChange: loadSprints })
       )
     );
     content.appendChild(list);
   }
 
+  content.appendChild(renderAddDayTaskForm(day));
+
   block.appendChild(content);
 
   return block;
+}
+
+// Lets a forgotten task be logged onto a past sprint day directly from the
+// Sprints tab, instead of having to revisit that date on the Today tab.
+function renderAddDayTaskForm(day) {
+  const form = document.createElement('form');
+  form.className = 'add-day-task-form';
+  form.addEventListener('click', (e) => e.stopPropagation());
+  form.innerHTML = `
+    <input type="text" name="description" placeholder="Add a task to this day..." required />
+    <select name="category">${categoryOptionsHtml(null)}</select>
+    <button type="submit">Add</button>
+  `;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const description = form.elements.description.value.trim();
+    if (!description) return;
+    const category = form.elements.category.value || null;
+
+    await fetch(`/api/days/${day.id}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, category }),
+    });
+
+    loadSprints();
+  });
+
+  return form;
 }
 
 // ---------- Statistics view ----------
@@ -1310,9 +1471,61 @@ function renderCompletedObjectivesSection(completed) {
   container.appendChild(section);
 }
 
+// Swaps an objective's title for an inline editable input, in place, without
+// collapsing the card (which a full loadObjectives() re-render would do).
+function toggleObjectiveTitleForm(titleWrap, objective) {
+  const existingForm = titleWrap.querySelector('.objective-title-edit-form');
+  const titleEl = titleWrap.querySelector('.objective-title');
+  const editBtn = titleWrap.querySelector('.objective-title-edit-btn');
+
+  if (existingForm) {
+    existingForm.remove();
+    titleEl.hidden = false;
+    editBtn.hidden = false;
+    return;
+  }
+
+  titleEl.hidden = true;
+  editBtn.hidden = true;
+
+  const form = document.createElement('form');
+  form.className = 'objective-title-edit-form';
+  form.addEventListener('click', (e) => e.stopPropagation());
+  form.innerHTML = `
+    <input type="text" name="title" value="${escapeAttr(objective.title)}" required />
+    <button type="submit">Save</button>
+    <button type="button" class="cancel">Cancel</button>
+  `;
+
+  form.querySelector('.cancel').addEventListener('click', (e) => {
+    e.stopPropagation();
+    form.remove();
+    titleEl.hidden = false;
+    editBtn.hidden = false;
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = form.elements.title.value.trim();
+    if (!title) return;
+    await fetch(`/api/objectives/${objective.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    loadObjectives();
+  });
+
+  titleWrap.appendChild(form);
+  form.querySelector('input').focus();
+}
+
 function renderObjectiveCard(objective) {
   const card = document.createElement('div');
-  card.className = 'objective-card' + (openObjectiveIds.has(objective.id) ? ' open' : '');
+  card.className =
+    'objective-card priority-' +
+    objective.priority.toLowerCase() +
+    (openObjectiveIds.has(objective.id) ? ' open' : '');
 
   const header = document.createElement('div');
   header.className = 'objective-header';
@@ -1322,10 +1535,26 @@ function renderObjectiveCard(objective) {
     card.classList.toggle('open');
   });
 
+  const titleWrap = document.createElement('span');
+  titleWrap.className = 'objective-title-wrap';
+
   const title = document.createElement('span');
   title.className = 'objective-title';
   title.textContent = objective.title;
-  header.appendChild(title);
+  titleWrap.appendChild(title);
+
+  const editTitleBtn = document.createElement('button');
+  editTitleBtn.type = 'button';
+  editTitleBtn.className = 'btn-edit objective-title-edit-btn';
+  editTitleBtn.textContent = '✎';
+  editTitleBtn.title = 'Edit title';
+  editTitleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleObjectiveTitleForm(titleWrap, objective);
+  });
+  titleWrap.appendChild(editTitleBtn);
+
+  header.appendChild(titleWrap);
 
   const prioritySelect = document.createElement('select');
   prioritySelect.className = 'objective-priority-select priority-' + objective.priority.toLowerCase();
@@ -1369,13 +1598,15 @@ function renderObjectiveCard(objective) {
 
   const openSubtasks = objective.subtasks.filter((s) => !s.done).length;
   const openDecisions = objective.decisions.filter((d) => !d.resolved).length;
+  const dueTodayCount = objective.subtasks.filter((s) => !s.done && s.due_date === todayKey()).length;
   const summaryBits = [];
   if (openSubtasks > 0) summaryBits.push(`${openSubtasks} subtask${openSubtasks > 1 ? 's' : ''}`);
   if (openDecisions > 0) summaryBits.push(`${openDecisions} decision${openDecisions > 1 ? 's' : ''}`);
   if (summaryBits.length > 0) {
     const summary = document.createElement('span');
-    summary.className = 'objective-summary';
+    summary.className = 'objective-summary' + (dueTodayCount > 0 ? ' has-due-today' : '');
     summary.textContent = summaryBits.join(' · ');
+    if (dueTodayCount > 0) summary.title = `${dueTodayCount} sub-task${dueTodayCount > 1 ? 's' : ''} due today`;
     header.appendChild(summary);
   }
 
@@ -1407,7 +1638,7 @@ function renderObjectiveUpdatesSection(objective) {
   section.className = 'objective-subsection';
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Progress updates';
+  heading.textContent = '📝 Progress updates';
   section.appendChild(heading);
 
   if (objective.updates.length === 0) {
@@ -1476,7 +1707,7 @@ function renderObjectiveDecisionsSection(objective) {
   section.className = 'objective-subsection';
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Pending decisions';
+  heading.textContent = '❓ Pending decisions';
   section.appendChild(heading);
 
   if (objective.decisions.length === 0) {
@@ -1552,7 +1783,7 @@ function renderObjectiveSubtasksSection(objective) {
   section.className = 'objective-subsection';
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Sub-tasks';
+  heading.textContent = '✅ Sub-tasks';
   section.appendChild(heading);
 
   if (objective.subtasks.length === 0) {
@@ -1650,3 +1881,5 @@ document.getElementById('add-objective-form').addEventListener('submit', async (
 loadDay();
 refreshObjectivesBadge();
 setInterval(refreshObjectivesBadge, 5 * 60 * 1000);
+loadObjectiveDeadlines();
+setInterval(loadObjectiveDeadlines, 5 * 60 * 1000);

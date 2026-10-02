@@ -15,6 +15,7 @@ const TASK_CATEGORIES = [
   'Adhoc',
   'Support',
   'Domain learning',
+  'Documentation',
 ];
 
 const NOTE_CATEGORIES = ['Challenges', 'Achievements', 'Mistakes', 'Learnings'];
@@ -52,6 +53,31 @@ function getOrCreateDay(dateKey) {
   return day;
 }
 
+// A task left open (never marked done, no end_time set) on a day that has
+// already ended is auto-closed with a default 1-hour duration, so it doesn't
+// linger open indefinitely just because the day moved on without it.
+const DEFAULT_STALE_TASK_DURATION_SECONDS = 60 * 60;
+
+function closeStaleOpenTasks() {
+  const todayKey = toDateKey(new Date());
+  const staleTasks = db
+    .prepare(
+      `SELECT t.id, t.start_time FROM tasks t
+       JOIN days d ON d.id = t.day_id
+       WHERE t.status = 'open' AND d.date < ?`
+    )
+    .all(todayKey);
+
+  if (staleTasks.length === 0) return;
+
+  const close = db.prepare("UPDATE tasks SET end_time = ?, duration_seconds = ?, status = 'done' WHERE id = ?");
+  staleTasks.forEach((t) => {
+    const start = new Date(t.start_time);
+    const end = new Date(start.getTime() + DEFAULT_STALE_TASK_DURATION_SECONDS * 1000);
+    close.run(end.toISOString(), DEFAULT_STALE_TASK_DURATION_SECONDS, t.id);
+  });
+}
+
 function subtasksForTask(taskId) {
   return db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position').all(taskId);
 }
@@ -73,6 +99,7 @@ const MAX_GOALS_PER_DAY = 3;
 
 // GET a day (creating it + its sprint on first access), with its tasks and goals.
 app.get('/api/day', (req, res) => {
+  closeStaleOpenTasks();
   const dateKey = req.query.date || toDateKey(new Date());
   const day = getOrCreateDay(dateKey);
   const sprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(day.sprint_id);
@@ -264,6 +291,7 @@ app.delete('/api/tasks/:id', (req, res) => {
 
 // All sprints, each with its days and tasks, for the sprint-by-sprint view.
 app.get('/api/sprints', (req, res) => {
+  closeStaleOpenTasks();
   const sprints = db.prepare('SELECT * FROM sprints ORDER BY start_date DESC').all();
 
   const result = sprints.map((sprint) => {
@@ -667,6 +695,10 @@ app.post('/api/calendar/refresh', async (req, res) => {
 refreshCalendarCache();
 setInterval(refreshCalendarCache, CALENDAR_REFRESH_INTERVAL_MS);
 
+const STALE_TASK_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+closeStaleOpenTasks();
+setInterval(closeStaleOpenTasks, STALE_TASK_SWEEP_INTERVAL_MS);
+
 // ---------- Objectives (longer-running goals, tracked over many days) ----------
 
 app.get('/api/objective-statuses', (req, res) => {
@@ -695,7 +727,10 @@ app.get('/api/objectives', (req, res) => {
   const objectives = db
     .prepare(
       `SELECT * FROM objectives
-       ORDER BY CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 WHEN 'Low' THEN 2 ELSE 3 END, id DESC`
+       ORDER BY
+         CASE status WHEN 'In Progress' THEN 0 WHEN 'To Do' THEN 1 ELSE 2 END,
+         CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 WHEN 'Low' THEN 2 ELSE 3 END,
+         id DESC`
     )
     .all();
   const result = objectives.map((o) => ({
