@@ -863,7 +863,14 @@ app.patch('/api/objective-subtasks/:id', (req, res) => {
   if (!subtask) return res.status(404).json({ error: 'not found' });
 
   const done = req.body.done !== undefined ? (req.body.done ? 1 : 0) : subtask.done;
-  db.prepare('UPDATE objective_subtasks SET done = ? WHERE id = ?').run(done, subtask.id);
+
+  let dueDate = subtask.due_date;
+  if (req.body.due_date !== undefined) {
+    dueDate = req.body.due_date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate || '')) return res.status(400).json({ error: 'invalid due_date' });
+  }
+
+  db.prepare('UPDATE objective_subtasks SET done = ?, due_date = ? WHERE id = ?').run(done, dueDate, subtask.id);
   res.json(db.prepare('SELECT * FROM objective_subtasks WHERE id = ?').get(subtask.id));
 });
 

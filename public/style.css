@@ -1349,6 +1349,18 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--bg);
+  cursor: pointer;
+}
+
+.objective-subtask-due:hover { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); }
+
+.objective-subtask-due-edit {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
 }
 
 .objective-subtask-item.overdue {
@@ -1475,3 +1487,35 @@ main { max-width: 720px; margin: 0 auto; padding: 24px; }
 
 .integration-status.success { color: var(--done); }
 .integration-status.error { color: #d64545; }
+
+/* ---------- Idle lock ---------- */
+
+.idle-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--bg);
+}
+.idle-overlay[hidden] { display: none; }
+
+.idle-card {
+  text-align: center;
+  max-width: 360px;
+}
+.idle-card h2 { margin: 0 0 8px; }
+.idle-card p { margin: 0 0 20px; color: var(--muted); }
+
+.idle-resume-btn {
+  padding: 10px 22px;
+  font-size: 15px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.idle-resume-btn:hover { filter: brightness(1.1); }

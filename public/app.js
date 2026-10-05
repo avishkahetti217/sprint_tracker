@@ -198,6 +198,37 @@ document.querySelectorAll('.tab').forEach((btn) => {
   });
 });
 
+// ---------- Idle lock ----------
+
+const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+const idleOverlay = document.getElementById('idle-overlay');
+let idleTimer = null;
+
+function resetIdleTimer() {
+  if (!idleOverlay.hidden) return;
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(showIdleOverlay, IDLE_TIMEOUT_MS);
+}
+
+function showIdleOverlay() {
+  idleOverlay.hidden = false;
+  document.getElementById('idle-resume-btn').focus();
+}
+
+document.getElementById('idle-resume-btn').addEventListener('click', () => {
+  idleOverlay.hidden = true;
+  state.dateKey = todayKey();
+  datePicker.value = state.dateKey;
+  document.getElementById('tab-today').click();
+  loadDay();
+  resetIdleTimer();
+});
+
+['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'wheel'].forEach((evt) => {
+  document.addEventListener(evt, resetIdleTimer, { passive: true, capture: true });
+});
+resetIdleTimer();
+
 // ---------- Today view ----------
 
 const datePicker = document.getElementById('date-picker');
@@ -625,6 +656,7 @@ function renderTaskItem(task, opts) {
     del.textContent = '×';
     del.title = 'Delete';
     del.addEventListener('click', async () => {
+      if (!confirm(`Delete task "${task.description}"?`)) return;
       await deleteTask(task.id);
       if (opts.onChange) opts.onChange();
     });
@@ -1616,6 +1648,7 @@ function renderObjectiveCard(objective) {
   deleteBtn.title = 'Delete objective';
   deleteBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
+    if (!confirm(`Delete objective "${objective.title}"? This will also remove its updates, decisions and sub-tasks.`)) return;
     await fetch(`/api/objectives/${objective.id}`, { method: 'DELETE' });
     loadObjectives();
   });
@@ -1778,6 +1811,46 @@ function renderObjectiveDecisionsSection(objective) {
   return section;
 }
 
+// Swaps a sub-task's "by <date>" chip for a native date input in place, so
+// the due date can be corrected without deleting and re-adding the sub-task.
+function toggleSubtaskDueDateEdit(dueSpan, subtask) {
+  if (dueSpan.nextSibling && dueSpan.nextSibling.classList && dueSpan.nextSibling.classList.contains('objective-subtask-due-edit')) {
+    return;
+  }
+
+  dueSpan.hidden = true;
+
+  const input = document.createElement('input');
+  input.type = 'date';
+  input.className = 'objective-subtask-due-edit';
+  input.value = subtask.due_date;
+  input.addEventListener('click', (e) => e.stopPropagation());
+
+  const restore = () => {
+    input.remove();
+    dueSpan.hidden = false;
+  };
+
+  input.addEventListener('blur', restore);
+  input.addEventListener('change', async () => {
+    const value = input.value;
+    if (!value || value === subtask.due_date) {
+      restore();
+      return;
+    }
+    await fetch(`/api/objective-subtasks/${subtask.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ due_date: value }),
+    });
+    loadObjectives();
+  });
+
+  dueSpan.insertAdjacentElement('afterend', input);
+  input.focus();
+  if (typeof input.showPicker === 'function') input.showPicker();
+}
+
 function renderObjectiveSubtasksSection(objective) {
   const section = document.createElement('div');
   section.className = 'objective-subsection';
@@ -1821,6 +1894,8 @@ function renderObjectiveSubtasksSection(objective) {
       const due = document.createElement('span');
       due.className = 'objective-subtask-due';
       due.textContent = `by ${formatDateLabel(s.due_date)}`;
+      due.title = 'Click to change the due date';
+      due.addEventListener('click', () => toggleSubtaskDueDateEdit(due, s));
       item.appendChild(due);
 
       const del = document.createElement('button');
@@ -1828,6 +1903,7 @@ function renderObjectiveSubtasksSection(objective) {
       del.textContent = '×';
       del.title = 'Delete sub-task';
       del.addEventListener('click', async () => {
+        if (!confirm(`Delete sub-task "${s.text}"?`)) return;
         await fetch(`/api/objective-subtasks/${s.id}`, { method: 'DELETE' });
         loadObjectives();
       });
