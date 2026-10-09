@@ -194,9 +194,45 @@ document.querySelectorAll('.tab').forEach((btn) => {
     if (btn.dataset.tab === 'stats') initStats();
     if (btn.dataset.tab === 'notes') initNotesTab();
     if (btn.dataset.tab === 'objectives') initObjectives();
+    if (btn.dataset.tab === 'decisions') loadDecisions();
     if (btn.dataset.tab === 'integrations') loadIntegrationStatus();
   });
 });
+
+// ---------- Confirm dialog ----------
+
+const confirmOverlay = document.getElementById('confirm-overlay');
+
+// Resolves true when the user clicks Delete, false on Cancel / Escape / backdrop click.
+function confirmDialog(message) {
+  return new Promise((resolve) => {
+    const okBtn = document.getElementById('confirm-ok-btn');
+    const cancelBtn = document.getElementById('confirm-cancel-btn');
+    document.getElementById('confirm-message').textContent = message;
+    confirmOverlay.hidden = false;
+    cancelBtn.focus();
+
+    function close(result) {
+      confirmOverlay.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      confirmOverlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey, true);
+      resolve(result);
+    }
+    function onOk() { close(true); }
+    function onCancel() { close(false); }
+    function onBackdrop(e) { if (e.target === confirmOverlay) close(false); }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); }
+    }
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    confirmOverlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey, true);
+  });
+}
 
 // ---------- Idle lock ----------
 
@@ -656,7 +692,7 @@ function renderTaskItem(task, opts) {
     del.textContent = '×';
     del.title = 'Delete';
     del.addEventListener('click', async () => {
-      if (!confirm(`Delete task "${task.description}"?`)) return;
+      if (!(await confirmDialog(`Delete task "${task.description}"?`))) return;
       await deleteTask(task.id);
       if (opts.onChange) opts.onChange();
     });
@@ -1237,10 +1273,128 @@ function renderStatsSummary(data) {
 
 // ---------- Notes ----------
 //
-// Add-only: entries are saved to the database but intentionally not listed
-// or editable here.
+// Entries are added via the form and listed read-only below it, one month at a time.
 
 let noteCategoriesLoaded = false;
+let notesMonth = null; // YYYY-MM of the month currently opened, or null
+
+const NOTE_CATEGORY_COLORS = {
+  Challenges: '#e8590c',
+  Achievements: '#2f9e44',
+  Mistakes: '#d64545',
+  Learnings: '#3b5bdb',
+};
+
+function shiftMonth(monthKey, delta) {
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+// Month chips: the last 12 months plus any older month that has notes, oldest → newest.
+async function loadNoteMonths() {
+  const res = await fetch('/api/notes/months');
+  const counts = new Map((await res.json()).map((r) => [r.month, r.count]));
+
+  const current = todayKey().slice(0, 7);
+  const months = new Set(counts.keys());
+  for (let i = 0; i < 12; i++) months.add(shiftMonth(current, -i));
+  const sorted = [...months].filter((m) => m <= current || counts.has(m)).sort();
+
+  const strip = document.getElementById('notes-month-strip');
+  strip.innerHTML = '';
+  sorted.forEach((month) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    const count = counts.get(month) || 0;
+    chip.className = 'notes-month-chip' + (month === notesMonth ? ' active' : '') + (count ? '' : ' empty');
+    chip.innerHTML = `<span>${escapeAttr(formatMonthLabel(month))}</span><span class="notes-month-count">${count}</span>`;
+    chip.addEventListener('click', () => {
+      notesMonth = notesMonth === month ? null : month;
+      strip.querySelectorAll('.notes-month-chip').forEach((c) => c.classList.remove('active'));
+      if (notesMonth) chip.classList.add('active');
+      loadMonthNotes();
+    });
+    strip.appendChild(chip);
+  });
+
+  const active = strip.querySelector('.notes-month-chip.active');
+  if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
+  else strip.scrollLeft = strip.scrollWidth;
+}
+
+async function loadMonthNotes() {
+  const list = document.getElementById('notes-month-list');
+  list.innerHTML = '';
+  if (!notesMonth) return;
+
+  const res = await fetch(`/api/notes?month=${notesMonth}`);
+  const notes = await res.json();
+
+  const title = document.createElement('h2');
+  title.className = 'notes-month-title';
+  const [y, m] = notesMonth.split('-').map(Number);
+  title.textContent = new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  list.appendChild(title);
+
+  if (notes.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'notes-empty';
+    empty.textContent = 'No notes for this month.';
+    list.appendChild(empty);
+    return;
+  }
+
+  const byDate = new Map();
+  notes.forEach((n) => {
+    if (!byDate.has(n.date)) byDate.set(n.date, []);
+    byDate.get(n.date).push(n);
+  });
+
+  byDate.forEach((dayNotes, date) => {
+    const group = document.createElement('div');
+    group.className = 'notes-day';
+
+    const heading = document.createElement('h3');
+    heading.textContent = formatDateLabel(date);
+    group.appendChild(heading);
+
+    dayNotes.forEach((n) => {
+      const item = document.createElement('div');
+      item.className = 'note-item';
+
+      const badge = document.createElement('span');
+      badge.className = 'note-category-badge';
+      badge.textContent = n.category;
+      const color = NOTE_CATEGORY_COLORS[n.category] || 'var(--muted)';
+      badge.style.color = color;
+      badge.style.borderColor = `color-mix(in srgb, ${color} 45%, var(--border))`;
+      badge.style.background = `color-mix(in srgb, ${color} 15%, var(--card))`;
+      item.appendChild(badge);
+
+      const text = document.createElement('p');
+      text.className = 'note-text';
+      text.textContent = n.text;
+      item.appendChild(text);
+
+      group.appendChild(item);
+    });
+
+    list.appendChild(group);
+  });
+}
+
+document.getElementById('notes-scroll-left').addEventListener('click', () => {
+  document.getElementById('notes-month-strip').scrollBy({ left: -300, behavior: 'smooth' });
+});
+document.getElementById('notes-scroll-right').addEventListener('click', () => {
+  document.getElementById('notes-month-strip').scrollBy({ left: 300, behavior: 'smooth' });
+});
 
 async function initNotesTab() {
   if (!noteCategoriesLoaded) {
@@ -1253,6 +1407,8 @@ async function initNotesTab() {
   }
   const dateInput = document.getElementById('note-date');
   if (!dateInput.value) dateInput.value = state.dateKey;
+  loadNoteMonths();
+  loadMonthNotes();
 }
 
 document.getElementById('add-note-form').addEventListener('submit', async (e) => {
@@ -1274,12 +1430,196 @@ document.getElementById('add-note-form').addEventListener('submit', async (e) =>
     textInput.value = '';
     status.textContent = 'Saved.';
     status.className = 'note-save-status success';
+    loadNoteMonths();
+    if (notesMonth === date.slice(0, 7)) loadMonthNotes();
   } else {
     const err = await res.json().catch(() => ({ error: 'Failed to save' }));
     status.textContent = err.error || 'Failed to save';
     status.className = 'note-save-status error';
   }
 });
+
+// ---------- Decisions ----------
+//
+// Every objective's decisions in one table, with an editable "next step" per decision.
+
+async function loadDecisions() {
+  const res = await fetch('/api/objectives');
+  const objectives = (await res.json()).filter((o) => o.decisions.length > 0);
+  const wrap = document.getElementById('decisions-table-wrap');
+  wrap.innerHTML = '';
+
+  if (objectives.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'notes-empty';
+    empty.textContent = 'No decisions yet. Add them from an objective on the Objectives tab.';
+    wrap.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'decisions-table';
+  table.innerHTML = `
+    <thead>
+      <tr><th>Objective</th><th>Decision</th><th>Next step</th><th>Status</th></tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+
+  objectives.forEach((objective) => {
+    objective.decisions.forEach((d, i) => {
+      const tr = document.createElement('tr');
+      if (d.resolved) tr.classList.add('resolved');
+      if (i === 0) tr.classList.add('objective-first-row');
+
+      if (i === 0) {
+        const objCell = document.createElement('td');
+        objCell.className = 'decisions-objective';
+        objCell.rowSpan = objective.decisions.length;
+        objCell.textContent = objective.title;
+        const status = document.createElement('div');
+        status.className = 'decisions-objective-status';
+        status.textContent = objective.status;
+        objCell.appendChild(status);
+        tr.appendChild(objCell);
+      }
+
+      const decisionCell = document.createElement('td');
+      decisionCell.className = 'decisions-text';
+      decisionCell.textContent = d.text;
+      tr.appendChild(decisionCell);
+
+      tr.appendChild(renderNextStepsCell(d));
+
+      const statusCell = document.createElement('td');
+      const toggle = document.createElement('label');
+      toggle.className = 'decisions-status';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !!d.resolved;
+      checkbox.addEventListener('change', async () => {
+        await fetch(`/api/objective-decisions/${d.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resolved: checkbox.checked }),
+        });
+        loadDecisions();
+      });
+      toggle.appendChild(checkbox);
+      toggle.appendChild(document.createTextNode(d.resolved ? 'Decided' : 'Pending'));
+      statusCell.appendChild(toggle);
+      tr.appendChild(statusCell);
+
+      tbody.appendChild(tr);
+    });
+  });
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+}
+
+// "Next steps" cell: a checklist of follow-ups for one decision, plus an
+// explicit "+ Add next step" form so nothing depends on blur-to-save.
+function renderNextStepsCell(decision) {
+  const cell = document.createElement('td');
+  cell.className = 'decisions-next';
+
+  const list = document.createElement('ul');
+  list.className = 'next-steps-list';
+  (decision.next_steps || []).forEach((step) => {
+    const li = document.createElement('li');
+    li.className = 'next-step-item' + (step.done ? ' done' : '');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !!step.done;
+    checkbox.title = 'Mark as done';
+    checkbox.addEventListener('change', async () => {
+      await fetch(`/api/decision-next-steps/${step.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done: checkbox.checked }),
+      });
+      loadDecisions();
+    });
+    li.appendChild(checkbox);
+
+    const text = document.createElement('span');
+    text.className = 'next-step-text';
+    text.textContent = step.text;
+    li.appendChild(text);
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'btn-delete';
+    del.textContent = '×';
+    del.title = 'Delete next step';
+    del.addEventListener('click', async () => {
+      if (!(await confirmDialog(`Delete next step "${step.text}"?`))) return;
+      await fetch(`/api/decision-next-steps/${step.id}`, { method: 'DELETE' });
+      loadDecisions();
+    });
+    li.appendChild(del);
+
+    list.appendChild(li);
+  });
+  cell.appendChild(list);
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'next-step-add-btn';
+  addBtn.textContent = '+ Add next step';
+  cell.appendChild(addBtn);
+
+  const form = document.createElement('form');
+  form.className = 'next-step-form';
+  form.hidden = true;
+  form.innerHTML = `
+    <input type="text" placeholder="What happens next?" required />
+    <div class="next-step-form-actions">
+      <button type="button" class="next-step-cancel">Cancel</button>
+      <button type="submit" class="next-step-save">Add</button>
+    </div>
+    <div class="next-step-error" hidden></div>`;
+  const input = form.querySelector('input');
+  const error = form.querySelector('.next-step-error');
+  cell.appendChild(form);
+
+  const closeForm = () => {
+    form.hidden = true;
+    addBtn.hidden = false;
+    input.value = '';
+    error.hidden = true;
+  };
+  addBtn.addEventListener('click', () => {
+    form.hidden = false;
+    addBtn.hidden = true;
+    input.focus();
+  });
+  form.querySelector('.next-step-cancel').addEventListener('click', closeForm);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeForm();
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    const res = await fetch(`/api/objective-decisions/${decision.id}/next-steps`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      error.textContent = res && res.status === 404
+        ? 'Couldn\'t save — restart the server to pick up the latest changes.'
+        : 'Couldn\'t save the next step.';
+      error.hidden = false;
+      return;
+    }
+    loadDecisions();
+  });
+
+  return cell;
+}
 
 // ---------- Integrations ----------
 
@@ -1391,7 +1731,7 @@ function computeDueTodaySubtasks(objectives) {
     .forEach((o) => {
       o.subtasks.forEach((s) => {
         if (!s.done && s.due_date === todayStr) {
-          dueToday.push({ subtask: s, objectiveTitle: o.title });
+          dueToday.push({ subtask: s, objectiveId: o.id, objectiveTitle: o.title });
         }
       });
     });
@@ -1426,7 +1766,7 @@ function renderDueTodaySection(activeObjectives) {
   table.className = 'due-today-table';
   const tbody = document.createElement('tbody');
 
-  dueToday.forEach(({ subtask, objectiveTitle }) => {
+  dueToday.forEach(({ subtask, objectiveId, objectiveTitle }) => {
     const row = document.createElement('tr');
 
     const checkboxCell = document.createElement('td');
@@ -1445,7 +1785,16 @@ function renderDueTodaySection(activeObjectives) {
 
     const textCell = document.createElement('td');
     textCell.className = 'due-today-text';
-    textCell.textContent = subtask.text;
+    const link = document.createElement('a');
+    link.href = '#';
+    link.className = 'due-today-link';
+    link.textContent = subtask.text;
+    link.title = `Go to "${objectiveTitle}"`;
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      jumpToObjective(objectiveId, subtask.id);
+    });
+    textCell.appendChild(link);
     row.appendChild(textCell);
 
     const objCell = document.createElement('td');
@@ -1552,8 +1901,25 @@ function toggleObjectiveTitleForm(titleWrap, objective) {
   form.querySelector('input').focus();
 }
 
+// Expands an objective's card, scrolls it into view and briefly highlights
+// the given TO-DO inside it.
+function jumpToObjective(objectiveId, subtaskId) {
+  const card = document.querySelector(`.objective-card[data-objective-id="${objectiveId}"]`);
+  if (!card) return;
+  openObjectiveIds.add(objectiveId);
+  card.classList.add('open');
+
+  const target = (subtaskId && card.querySelector(`[data-subtask-id="${subtaskId}"]`)) || card;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.remove('jump-highlight');
+  void target.offsetWidth; // restart the animation if it's already applied
+  target.classList.add('jump-highlight');
+  setTimeout(() => target.classList.remove('jump-highlight'), 2000);
+}
+
 function renderObjectiveCard(objective) {
   const card = document.createElement('div');
+  card.dataset.objectiveId = objective.id;
   card.className =
     'objective-card priority-' +
     objective.priority.toLowerCase() +
@@ -1632,13 +1998,13 @@ function renderObjectiveCard(objective) {
   const openDecisions = objective.decisions.filter((d) => !d.resolved).length;
   const dueTodayCount = objective.subtasks.filter((s) => !s.done && s.due_date === todayKey()).length;
   const summaryBits = [];
-  if (openSubtasks > 0) summaryBits.push(`${openSubtasks} subtask${openSubtasks > 1 ? 's' : ''}`);
+  if (openSubtasks > 0) summaryBits.push(`${openSubtasks} TO-DO${openSubtasks > 1 ? 's' : ''}`);
   if (openDecisions > 0) summaryBits.push(`${openDecisions} decision${openDecisions > 1 ? 's' : ''}`);
   if (summaryBits.length > 0) {
     const summary = document.createElement('span');
     summary.className = 'objective-summary' + (dueTodayCount > 0 ? ' has-due-today' : '');
     summary.textContent = summaryBits.join(' · ');
-    if (dueTodayCount > 0) summary.title = `${dueTodayCount} sub-task${dueTodayCount > 1 ? 's' : ''} due today`;
+    if (dueTodayCount > 0) summary.title = `${dueTodayCount} TO-DO${dueTodayCount > 1 ? 's' : ''} due today`;
     header.appendChild(summary);
   }
 
@@ -1648,7 +2014,7 @@ function renderObjectiveCard(objective) {
   deleteBtn.title = 'Delete objective';
   deleteBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!confirm(`Delete objective "${objective.title}"? This will also remove its updates, decisions and sub-tasks.`)) return;
+    if (!(await confirmDialog(`Delete objective "${objective.title}"? This will also remove its updates, decisions and TO-DOs.`))) return;
     await fetch(`/api/objectives/${objective.id}`, { method: 'DELETE' });
     loadObjectives();
   });
@@ -1740,13 +2106,13 @@ function renderObjectiveDecisionsSection(objective) {
   section.className = 'objective-subsection';
 
   const heading = document.createElement('h4');
-  heading.textContent = '❓ Pending decisions';
+  heading.textContent = '🧭 Decisions made';
   section.appendChild(heading);
 
   if (objective.decisions.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = 'No pending decisions.';
+    empty.textContent = 'No decisions made yet.';
     section.appendChild(empty);
   } else {
     const list = document.createElement('ul');
@@ -1791,7 +2157,7 @@ function renderObjectiveDecisionsSection(objective) {
   const form = document.createElement('form');
   form.className = 'add-objective-decision-form';
   form.innerHTML = `
-    <input type="text" placeholder="A decision that needs to be made..." required />
+    <input type="text" placeholder="A decision that was made..." required />
     <button type="submit">Add</button>
   `;
   form.addEventListener('submit', async (e) => {
@@ -1856,13 +2222,13 @@ function renderObjectiveSubtasksSection(objective) {
   section.className = 'objective-subsection';
 
   const heading = document.createElement('h4');
-  heading.textContent = '✅ Sub-tasks';
+  heading.textContent = '✅ TO-DOs';
   section.appendChild(heading);
 
   if (objective.subtasks.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = 'No sub-tasks yet.';
+    empty.textContent = 'No TO-DOs yet.';
     section.appendChild(empty);
   } else {
     const list = document.createElement('ul');
@@ -1872,6 +2238,7 @@ function renderObjectiveSubtasksSection(objective) {
       const item = document.createElement('li');
       const overdue = !s.done && s.due_date < todayStr;
       item.className = 'objective-subtask-item' + (s.done ? ' done' : '') + (overdue ? ' overdue' : '');
+      item.dataset.subtaskId = s.id;
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
@@ -1901,9 +2268,9 @@ function renderObjectiveSubtasksSection(objective) {
       const del = document.createElement('button');
       del.className = 'btn-delete';
       del.textContent = '×';
-      del.title = 'Delete sub-task';
+      del.title = 'Delete TO-DO';
       del.addEventListener('click', async () => {
-        if (!confirm(`Delete sub-task "${s.text}"?`)) return;
+        if (!(await confirmDialog(`Delete TO-DO "${s.text}"?`))) return;
         await fetch(`/api/objective-subtasks/${s.id}`, { method: 'DELETE' });
         loadObjectives();
       });

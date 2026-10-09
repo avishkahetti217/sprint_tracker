@@ -13,6 +13,7 @@
       <nav>
         <button id="tab-today" class="tab active" data-tab="today">Today</button>
         <button id="tab-objectives" class="tab" data-tab="objectives">Objectives<span id="objectives-due-badge" class="tab-badge" hidden>0</span></button>
+        <button id="tab-decisions" class="tab" data-tab="decisions">Decisions</button>
         <button id="tab-sprints" class="tab" data-tab="sprints">Sprints</button>
         <button id="tab-stats" class="tab" data-tab="stats">Statistics</button>
         <button id="tab-notes" class="tab" data-tab="notes">Notes</button>
@@ -95,6 +96,19 @@
         <button type="submit">Add note</button>
       </form>
       <div id="note-save-status" class="note-save-status"></div>
+
+      <div class="notes-month">
+        <div class="notes-month-slider">
+          <button type="button" id="notes-scroll-left" class="notes-month-btn" title="Scroll back">&lsaquo;</button>
+          <div id="notes-month-strip" class="notes-month-strip"></div>
+          <button type="button" id="notes-scroll-right" class="notes-month-btn" title="Scroll forward">&rsaquo;</button>
+        </div>
+        <div id="notes-month-list" class="notes-month-list"></div>
+      </div>
+    </section>
+
+    <section id="view-decisions" class="view">
+      <div id="decisions-table-wrap" class="decisions-table-wrap"></div>
     </section>
 
     <section id="view-objectives" class="view">
@@ -139,6 +153,17 @@
       <h2>Still there?</h2>
       <p>The tracker was paused after 2 minutes of inactivity.</p>
       <button type="button" id="idle-resume-btn" class="idle-resume-btn">Back to Today</button>
+    </div>
+  </div>
+
+  <div id="confirm-overlay" class="confirm-overlay" hidden>
+    <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <h3 id="confirm-title">Confirm delete</h3>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button type="button" id="confirm-cancel-btn" class="confirm-cancel-btn">Cancel</button>
+        <button type="button" id="confirm-ok-btn" class="confirm-ok-btn">Delete</button>
+      </div>
     </div>
   </div>
 

@@ -455,6 +455,14 @@ app.get('/api/note-categories', (req, res) => {
   res.json(NOTE_CATEGORIES);
 });
 
+// Note counts per month, newest first: [{ month: 'YYYY-MM', count }].
+app.get('/api/notes/months', (req, res) => {
+  const rows = db
+    .prepare("SELECT substr(date, 1, 7) AS month, COUNT(*) AS count FROM notes GROUP BY month ORDER BY month DESC")
+    .all();
+  res.json(rows);
+});
+
 app.get('/api/notes', (req, res) => {
   const month = req.query.month;
   if (!/^\d{4}-\d{2}$/.test(month || '')) {
@@ -714,8 +722,14 @@ function objectiveUpdates(objectiveId) {
     .prepare('SELECT * FROM objective_updates WHERE objective_id = ? ORDER BY date DESC, id DESC')
     .all(objectiveId);
 }
+function decisionNextSteps(decisionId) {
+  return db.prepare('SELECT * FROM decision_next_steps WHERE decision_id = ? ORDER BY id').all(decisionId);
+}
 function objectiveDecisions(objectiveId) {
-  return db.prepare('SELECT * FROM objective_decisions WHERE objective_id = ? ORDER BY id').all(objectiveId);
+  return db
+    .prepare('SELECT * FROM objective_decisions WHERE objective_id = ? ORDER BY id')
+    .all(objectiveId)
+    .map((d) => ({ ...d, next_steps: decisionNextSteps(d.id) }));
 }
 function objectiveSubtasks(objectiveId) {
   return db
@@ -784,6 +798,9 @@ app.patch('/api/objectives/:id', (req, res) => {
 app.delete('/api/objectives/:id', (req, res) => {
   const id = req.params.id;
   db.prepare('DELETE FROM objective_updates WHERE objective_id = ?').run(id);
+  db.prepare(
+    'DELETE FROM decision_next_steps WHERE decision_id IN (SELECT id FROM objective_decisions WHERE objective_id = ?)'
+  ).run(id);
   db.prepare('DELETE FROM objective_decisions WHERE objective_id = ?').run(id);
   db.prepare('DELETE FROM objective_subtasks WHERE objective_id = ?').run(id);
   db.prepare('DELETE FROM objectives WHERE id = ?').run(id);
@@ -837,7 +854,40 @@ app.patch('/api/objective-decisions/:id', (req, res) => {
 });
 
 app.delete('/api/objective-decisions/:id', (req, res) => {
+  db.prepare('DELETE FROM decision_next_steps WHERE decision_id = ?').run(req.params.id);
   db.prepare('DELETE FROM objective_decisions WHERE id = ?').run(req.params.id);
+  res.status(204).end();
+});
+
+// Next steps that follow on from a decision.
+app.post('/api/objective-decisions/:id/next-steps', (req, res) => {
+  const decision = db.prepare('SELECT * FROM objective_decisions WHERE id = ?').get(req.params.id);
+  if (!decision) return res.status(404).json({ error: 'not found' });
+
+  const text = (req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'text is required' });
+
+  const info = db
+    .prepare('INSERT INTO decision_next_steps (decision_id, text, done, created_at) VALUES (?, ?, 0, ?)')
+    .run(decision.id, text, new Date().toISOString());
+
+  res.status(201).json(db.prepare('SELECT * FROM decision_next_steps WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.patch('/api/decision-next-steps/:id', (req, res) => {
+  const step = db.prepare('SELECT * FROM decision_next_steps WHERE id = ?').get(req.params.id);
+  if (!step) return res.status(404).json({ error: 'not found' });
+
+  const text = req.body.text !== undefined ? String(req.body.text).trim() : step.text;
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  const done = req.body.done !== undefined ? (req.body.done ? 1 : 0) : step.done;
+
+  db.prepare('UPDATE decision_next_steps SET text = ?, done = ? WHERE id = ?').run(text, done, step.id);
+  res.json(db.prepare('SELECT * FROM decision_next_steps WHERE id = ?').get(step.id));
+});
+
+app.delete('/api/decision-next-steps/:id', (req, res) => {
+  db.prepare('DELETE FROM decision_next_steps WHERE id = ?').run(req.params.id);
   res.status(204).end();
 });
 
