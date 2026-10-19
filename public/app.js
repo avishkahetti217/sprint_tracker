@@ -184,6 +184,29 @@ function combineDateAndTime(referenceIso, timeStr) {
 
 // ---------- Tabs ----------
 
+// Side nav collapse: icons only when collapsed. Remembered per browser.
+const sideNav = document.getElementById('side-nav');
+const sideNavToggle = document.getElementById('side-nav-toggle');
+
+function setSideNavCollapsed(collapsed) {
+  sideNav.classList.toggle('collapsed', collapsed);
+  sideNavToggle.setAttribute('aria-expanded', String(!collapsed));
+  sideNavToggle.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  sideNavToggle.querySelector('.side-nav-toggle-icon').textContent = collapsed ? '»' : '«';
+}
+
+try {
+  setSideNavCollapsed(localStorage.getItem('sideNavCollapsed') === '1');
+} catch {}
+
+sideNavToggle.addEventListener('click', () => {
+  const collapsed = !sideNav.classList.contains('collapsed');
+  setSideNavCollapsed(collapsed);
+  try {
+    localStorage.setItem('sideNavCollapsed', collapsed ? '1' : '0');
+  } catch {}
+});
+
 document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
@@ -191,10 +214,11 @@ document.querySelectorAll('.tab').forEach((btn) => {
     btn.classList.add('active');
     document.getElementById(`view-${btn.dataset.tab}`).classList.add('active');
     if (btn.dataset.tab === 'sprints') loadSprints();
+    if (btn.dataset.tab === 'references') initReferences();
     if (btn.dataset.tab === 'stats') initStats();
     if (btn.dataset.tab === 'notes') initNotesTab();
     if (btn.dataset.tab === 'objectives') initObjectives();
-    if (btn.dataset.tab === 'decisions') loadDecisions();
+    if (btn.dataset.tab === 'decisions' || btn.dataset.tab === 'questions') loadObjectiveItemsTable(btn.dataset.tab);
     if (btn.dataset.tab === 'integrations') loadIntegrationStatus();
   });
 });
@@ -204,10 +228,12 @@ document.querySelectorAll('.tab').forEach((btn) => {
 const confirmOverlay = document.getElementById('confirm-overlay');
 
 // Resolves true when the user clicks Delete, false on Cancel / Escape / backdrop click.
-function confirmDialog(message) {
+function confirmDialog(message, { title = 'Confirm delete', confirmLabel = 'Delete' } = {}) {
   return new Promise((resolve) => {
     const okBtn = document.getElementById('confirm-ok-btn');
     const cancelBtn = document.getElementById('confirm-cancel-btn');
+    document.getElementById('confirm-title').textContent = title;
+    okBtn.textContent = confirmLabel;
     document.getElementById('confirm-message').textContent = message;
     confirmOverlay.hidden = false;
     cancelBtn.focus();
@@ -1439,20 +1465,50 @@ document.getElementById('add-note-form').addEventListener('submit', async (e) =>
   }
 });
 
-// ---------- Decisions ----------
+// ---------- Decisions & Questions ----------
 //
-// Every objective's decisions in one table, with an editable "next step" per decision.
+// Both are items logged against an objective, each with a checklist of next
+// steps. They share one renderer, configured per kind below.
 
-async function loadDecisions() {
+const OBJECTIVE_ITEM_KINDS = {
+  decisions: {
+    route: 'objective-decisions',
+    stepsRoute: 'decision-next-steps',
+    noun: 'decision',
+    heading: '🧭 Decisions made',
+    sectionEmpty: 'No decisions made yet.',
+    placeholder: 'A decision that was made...',
+    tableEmpty: 'No decisions yet. Add them from an objective on the Objectives tab.',
+    column: 'Decision',
+    openLabel: 'Pending',
+    resolvedLabel: 'Decided',
+  },
+  questions: {
+    route: 'objective-questions',
+    stepsRoute: 'question-next-steps',
+    noun: 'question',
+    heading: '❔ Questions',
+    sectionEmpty: 'No questions yet.',
+    placeholder: 'A question that needs an answer...',
+    tableEmpty: 'No questions yet. Add them from an objective on the Objectives tab.',
+    column: 'Question',
+    openLabel: 'Open',
+    resolvedLabel: 'Answered',
+  },
+};
+
+// Renders the Decisions or Questions tab: every objective's items in one table.
+async function loadObjectiveItemsTable(kindKey) {
+  const kind = OBJECTIVE_ITEM_KINDS[kindKey];
   const res = await fetch('/api/objectives');
-  const objectives = (await res.json()).filter((o) => o.decisions.length > 0);
-  const wrap = document.getElementById('decisions-table-wrap');
+  const objectives = (await res.json()).filter((o) => (o[kindKey] || []).length > 0);
+  const wrap = document.getElementById(`${kindKey}-table-wrap`);
   wrap.innerHTML = '';
 
   if (objectives.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'notes-empty';
-    empty.textContent = 'No decisions yet. Add them from an objective on the Objectives tab.';
+    empty.textContent = kind.tableEmpty;
     wrap.appendChild(empty);
     return;
   }
@@ -1461,20 +1517,22 @@ async function loadDecisions() {
   table.className = 'decisions-table';
   table.innerHTML = `
     <thead>
-      <tr><th>Objective</th><th>Decision</th><th>Next step</th><th>Status</th></tr>
+      <tr><th>Objective</th><th>${kind.column}</th><th>Next steps</th><th>Status</th></tr>
     </thead>`;
   const tbody = document.createElement('tbody');
+  const reload = () => loadObjectiveItemsTable(kindKey);
 
   objectives.forEach((objective) => {
-    objective.decisions.forEach((d, i) => {
+    const items = objective[kindKey];
+    items.forEach((item, i) => {
       const tr = document.createElement('tr');
-      if (d.resolved) tr.classList.add('resolved');
-      if (i === 0) tr.classList.add('objective-first-row');
+      if (item.resolved) tr.classList.add('resolved');
 
       if (i === 0) {
+        tr.classList.add('objective-first-row');
         const objCell = document.createElement('td');
         objCell.className = 'decisions-objective';
-        objCell.rowSpan = objective.decisions.length;
+        objCell.rowSpan = items.length;
         objCell.textContent = objective.title;
         const status = document.createElement('div');
         status.className = 'decisions-objective-status';
@@ -1483,29 +1541,38 @@ async function loadDecisions() {
         tr.appendChild(objCell);
       }
 
-      const decisionCell = document.createElement('td');
-      decisionCell.className = 'decisions-text';
-      decisionCell.textContent = d.text;
-      tr.appendChild(decisionCell);
+      const textCell = document.createElement('td');
+      textCell.className = 'decisions-text';
+      const link = document.createElement('a');
+      link.href = '#';
+      link.className = 'due-today-link';
+      link.textContent = item.text;
+      link.title = `Open "${objective.title}"`;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        goToObjective(objective.id, `[data-item-key="${kindKey}-${item.id}"]`);
+      });
+      textCell.appendChild(link);
+      tr.appendChild(textCell);
 
-      tr.appendChild(renderNextStepsCell(d));
+      tr.appendChild(renderNextStepsCell(kind, item, reload));
 
       const statusCell = document.createElement('td');
       const toggle = document.createElement('label');
       toggle.className = 'decisions-status';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.checked = !!d.resolved;
+      checkbox.checked = !!item.resolved;
       checkbox.addEventListener('change', async () => {
-        await fetch(`/api/objective-decisions/${d.id}`, {
+        await fetch(`/api/${kind.route}/${item.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resolved: checkbox.checked }),
         });
-        loadDecisions();
+        reload();
       });
       toggle.appendChild(checkbox);
-      toggle.appendChild(document.createTextNode(d.resolved ? 'Decided' : 'Pending'));
+      toggle.appendChild(document.createTextNode(item.resolved ? kind.resolvedLabel : kind.openLabel));
       statusCell.appendChild(toggle);
       tr.appendChild(statusCell);
 
@@ -1517,15 +1584,15 @@ async function loadDecisions() {
   wrap.appendChild(table);
 }
 
-// "Next steps" cell: a checklist of follow-ups for one decision, plus an
-// explicit "+ Add next step" form so nothing depends on blur-to-save.
-function renderNextStepsCell(decision) {
+// "Next steps" cell: a checklist of follow-ups for one decision / question,
+// plus an explicit "+ Add next step" form so nothing depends on blur-to-save.
+function renderNextStepsCell(kind, item, reload) {
   const cell = document.createElement('td');
   cell.className = 'decisions-next';
 
   const list = document.createElement('ul');
   list.className = 'next-steps-list';
-  (decision.next_steps || []).forEach((step) => {
+  (item.next_steps || []).forEach((step) => {
     const li = document.createElement('li');
     li.className = 'next-step-item' + (step.done ? ' done' : '');
 
@@ -1534,12 +1601,12 @@ function renderNextStepsCell(decision) {
     checkbox.checked = !!step.done;
     checkbox.title = 'Mark as done';
     checkbox.addEventListener('change', async () => {
-      await fetch(`/api/decision-next-steps/${step.id}`, {
+      await fetch(`/api/${kind.stepsRoute}/${step.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ done: checkbox.checked }),
       });
-      loadDecisions();
+      reload();
     });
     li.appendChild(checkbox);
 
@@ -1555,8 +1622,8 @@ function renderNextStepsCell(decision) {
     del.title = 'Delete next step';
     del.addEventListener('click', async () => {
       if (!(await confirmDialog(`Delete next step "${step.text}"?`))) return;
-      await fetch(`/api/decision-next-steps/${step.id}`, { method: 'DELETE' });
-      loadDecisions();
+      await fetch(`/api/${kind.stepsRoute}/${step.id}`, { method: 'DELETE' });
+      reload();
     });
     li.appendChild(del);
 
@@ -1603,7 +1670,7 @@ function renderNextStepsCell(decision) {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
-    const res = await fetch(`/api/objective-decisions/${decision.id}/next-steps`, {
+    const res = await fetch(`/api/${kind.route}/${item.id}/next-steps`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
@@ -1615,11 +1682,168 @@ function renderNextStepsCell(decision) {
       error.hidden = false;
       return;
     }
-    loadDecisions();
+    reload();
   });
 
   return cell;
 }
+
+// ---------- Reference links ----------
+//
+// Links and Jira tickets kept for reference, saved against a day and listed
+// newest day first.
+
+let referenceFilter = 'all';
+let referencesCache = [];
+
+// Jira tickets are recognised by their /browse/KEY-123 (or selectedIssue=KEY-123) URL.
+function jiraKey(url) {
+  const m = url.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/i) || url.match(/selectedIssue=([A-Z][A-Z0-9_]+-\d+)/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+function referenceHost(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+async function initReferences() {
+  const dateInput = document.getElementById('reference-date');
+  if (!dateInput.value) dateInput.value = todayKey();
+  await loadReferences();
+}
+
+async function loadReferences() {
+  const res = await fetch('/api/references');
+  referencesCache = await res.json();
+  renderReferences();
+}
+
+function renderReferences() {
+  const list = document.getElementById('references-list');
+  list.innerHTML = '';
+  const query = document.getElementById('references-search').value.trim().toLowerCase();
+
+  const shown = referencesCache.filter((r) => {
+    const key = jiraKey(r.url);
+    if (referenceFilter === 'jira' && !key) return false;
+    if (referenceFilter === 'link' && key) return false;
+    if (query && ![r.title, r.url, key].filter(Boolean).join(' ').toLowerCase().includes(query)) return false;
+    return true;
+  });
+
+  if (shown.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'notes-empty';
+    empty.textContent = referencesCache.length === 0 ? 'No reference links yet — add one above.' : 'No links match.';
+    list.appendChild(empty);
+    return;
+  }
+
+  const byDate = new Map();
+  shown.forEach((r) => {
+    if (!byDate.has(r.date)) byDate.set(r.date, []);
+    byDate.get(r.date).push(r);
+  });
+
+  const today = todayKey();
+  byDate.forEach((links, date) => {
+    const group = document.createElement('div');
+    group.className = 'notes-day';
+
+    const heading = document.createElement('h3');
+    heading.textContent = date === today ? `Today · ${formatDateLabel(date)}` : formatDateLabel(date);
+    group.appendChild(heading);
+
+    links.forEach((r) => {
+      const key = jiraKey(r.url);
+      const item = document.createElement('div');
+      item.className = 'reference-item';
+
+      const badge = document.createElement('span');
+      badge.className = 'reference-badge' + (key ? ' jira' : '');
+      badge.textContent = key || 'Link';
+      item.appendChild(badge);
+
+      const body = document.createElement('div');
+      body.className = 'reference-body';
+      const a = document.createElement('a');
+      a.className = 'reference-link';
+      a.href = r.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = r.title || key || referenceHost(r.url);
+      body.appendChild(a);
+      const urlLine = document.createElement('div');
+      urlLine.className = 'reference-url';
+      urlLine.textContent = r.url;
+      urlLine.title = r.url;
+      body.appendChild(urlLine);
+      item.appendChild(body);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn-delete';
+      del.textContent = '×';
+      del.title = 'Delete link';
+      del.addEventListener('click', async () => {
+        if (!(await confirmDialog(`Delete "${r.title || key || r.url}"?`))) return;
+        await fetch(`/api/references/${r.id}`, { method: 'DELETE' });
+        loadReferences();
+      });
+      item.appendChild(del);
+
+      group.appendChild(item);
+    });
+
+    list.appendChild(group);
+  });
+}
+
+document.getElementById('add-reference-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const urlInput = document.getElementById('reference-url');
+  const titleInput = document.getElementById('reference-title');
+  const error = document.getElementById('reference-error');
+  let url = urlInput.value.trim();
+  if (!url) return;
+  if (!/^[a-z]+:\/\//i.test(url)) url = `https://${url}`;
+
+  const res = await fetch('/api/references', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: document.getElementById('reference-date').value,
+      url,
+      title: titleInput.value.trim(),
+    }),
+  }).catch(() => null);
+
+  if (!res || !res.ok) {
+    const err = res ? await res.json().catch(() => ({})) : {};
+    error.textContent =
+      res && res.status === 404 ? "Couldn't save — restart the server to pick up the latest changes." : err.error || "Couldn't save the link.";
+    error.hidden = false;
+    return;
+  }
+  error.hidden = true;
+  urlInput.value = '';
+  titleInput.value = '';
+  urlInput.focus();
+  loadReferences();
+});
+
+document.querySelectorAll('#references-filter [data-filter]').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    referenceFilter = chip.dataset.filter;
+    document.querySelectorAll('#references-filter [data-filter]').forEach((c) => c.classList.toggle('active', c === chip));
+    renderReferences();
+  });
+});
+document.getElementById('references-search').addEventListener('input', renderReferences);
 
 // ---------- Integrations ----------
 
@@ -1702,16 +1926,140 @@ async function initObjectives() {
     ]);
     objectiveStatuses = await statusesRes.json();
     objectivePriorities = await prioritiesRes.json();
+    renderObjectiveFilterChips();
   }
-  loadObjectives();
+  await loadObjectives();
 }
+
+let lastObjectives = [];
+let objectivesQuery = '';
+// Selected priority / status filter values. Empty set = no filter on that field.
+const objectiveFilters = { priority: new Set(), status: new Set() };
 
 async function loadObjectives() {
   const res = await fetch('/api/objectives');
   const objectives = await res.json();
+  lastObjectives = objectives;
   updateObjectivesTabBadge(objectives);
   renderObjectivesView(objectives);
 }
+
+// ---------- Objectives search ----------
+
+// Every piece of text inside an objective's card, for matching against the search box.
+function objectiveSearchText(o) {
+  const parts = [o.title, o.status, o.priority];
+  (o.updates || []).forEach((u) => parts.push(u.text, u.date));
+  ['decisions', 'questions'].forEach((key) => {
+    (o[key] || []).forEach((item) => {
+      parts.push(item.text);
+      (item.next_steps || []).forEach((s) => parts.push(s.text));
+    });
+  });
+  (o.subtasks || []).forEach((s) => parts.push(s.text));
+  return parts.filter(Boolean).join('\n').toLowerCase();
+}
+
+function objectiveMatches(o, query) {
+  const haystack = objectiveSearchText(o);
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => haystack.includes(word));
+}
+
+// Wraps each occurrence of the search words inside `root` in <mark>.
+function highlightMatches(root, query) {
+  const words = query.split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (words.length === 0) return;
+  const pattern = new RegExp(`(${words.join('|')})`, 'gi');
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) =>
+      node.parentElement.closest('mark, script, style, textarea, select, option')
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+
+  nodes.forEach((node) => {
+    const parts = node.nodeValue.split(pattern);
+    if (parts.length < 2) return;
+    const frag = document.createDocumentFragment();
+    parts.forEach((part, i) => {
+      if (i % 2 === 1) {
+        const mark = document.createElement('mark');
+        mark.className = 'search-hit';
+        mark.textContent = part;
+        frag.appendChild(mark);
+      } else if (part) {
+        frag.appendChild(document.createTextNode(part));
+      }
+    });
+    node.replaceWith(frag);
+  });
+}
+
+function objectiveFiltersActive() {
+  return objectiveFilters.priority.size > 0 || objectiveFilters.status.size > 0;
+}
+
+function objectivePassesFilters(o) {
+  return (
+    (objectiveFilters.priority.size === 0 || objectiveFilters.priority.has(o.priority)) &&
+    (objectiveFilters.status.size === 0 || objectiveFilters.status.has(o.status))
+  );
+}
+
+// Toggle chips for each priority and status; several can be selected at once.
+function renderObjectiveFilterChips() {
+  [
+    ['priority', objectivePriorities, 'objectives-filter-priority'],
+    ['status', objectiveStatuses, 'objectives-filter-status'],
+  ].forEach(([field, values, containerId]) => {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    values.forEach((value) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = `objectives-filter-chip ${field}-${value.toLowerCase().replace(/\s+/g, '-')}`;
+      chip.textContent = value;
+      const selected = objectiveFilters[field].has(value);
+      chip.classList.toggle('active', selected);
+      chip.setAttribute('aria-pressed', String(selected));
+      chip.addEventListener('click', () => {
+        if (objectiveFilters[field].has(value)) objectiveFilters[field].delete(value);
+        else objectiveFilters[field].add(value);
+        renderObjectiveFilterChips();
+        renderObjectivesView(lastObjectives);
+      });
+      container.appendChild(chip);
+    });
+  });
+  document.getElementById('objectives-filter-clear').hidden = !objectiveFiltersActive();
+}
+
+document.getElementById('objectives-filter-clear').addEventListener('click', () => {
+  objectiveFilters.priority.clear();
+  objectiveFilters.status.clear();
+  renderObjectiveFilterChips();
+  renderObjectivesView(lastObjectives);
+});
+
+const objectivesSearchInput = document.getElementById('objectives-search');
+objectivesSearchInput.addEventListener('input', () => {
+  objectivesQuery = objectivesSearchInput.value.trim();
+  renderObjectivesView(lastObjectives);
+});
+objectivesSearchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && objectivesSearchInput.value) {
+    objectivesSearchInput.value = '';
+    objectivesQuery = '';
+    renderObjectivesView(lastObjectives);
+  }
+});
 
 // Fetches just enough to keep the tab badge current even if the user hasn't
 // opened the Objectives tab yet this session (e.g. right after page load).
@@ -1792,7 +2140,7 @@ function renderDueTodaySection(activeObjectives) {
     link.title = `Go to "${objectiveTitle}"`;
     link.addEventListener('click', (e) => {
       e.preventDefault();
-      jumpToObjective(objectiveId, subtask.id);
+      jumpToObjective(objectiveId, `[data-subtask-id="${subtask.id}"]`);
     });
     textCell.appendChild(link);
     row.appendChild(textCell);
@@ -1811,20 +2159,41 @@ function renderDueTodaySection(activeObjectives) {
 }
 
 function renderObjectivesView(objectives) {
-  const active = objectives.filter((o) => o.status !== 'Done');
-  const completed = objectives.filter((o) => o.status === 'Done');
+  renderDueTodaySection(objectives.filter((o) => o.status !== 'Done'));
 
-  renderDueTodaySection(active);
+  const query = objectivesQuery;
+  const filtering = !!query || objectiveFiltersActive();
+  const shown = objectives.filter((o) => objectivePassesFilters(o) && (!query || objectiveMatches(o, query)));
+  const active = shown.filter((o) => o.status !== 'Done');
+  const completed = shown.filter((o) => o.status === 'Done');
+
+  const countEl = document.getElementById('objectives-search-count');
+  countEl.textContent = filtering ? `${shown.length} of ${objectives.length}` : '';
 
   const activeContainer = document.getElementById('objectives-active');
   activeContainer.innerHTML = '';
-  if (active.length === 0) {
+  if (filtering && shown.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    const filterNote = objectiveFiltersActive() ? ' with these filters' : '';
+    empty.textContent = query ? `No objectives match "${query}"${filterNote}.` : 'No objectives match these filters.';
+    activeContainer.appendChild(empty);
+  } else if (active.length === 0 && !filtering) {
     activeContainer.innerHTML = '<div class="empty-state">No objectives yet — add one above.</div>';
   } else {
     active.forEach((o) => activeContainer.appendChild(renderObjectiveCard(o)));
   }
 
   renderCompletedObjectivesSection(completed);
+
+  // While searching, expand every matching card and highlight the hits.
+  if (query) {
+    ['objectives-active', 'objectives-completed-section'].forEach((id) => {
+      const container = document.getElementById(id);
+      container.querySelectorAll('.objective-card').forEach((card) => card.classList.add('open'));
+      highlightMatches(container, query);
+    });
+  }
 }
 
 function renderCompletedObjectivesSection(completed) {
@@ -1833,11 +2202,12 @@ function renderCompletedObjectivesSection(completed) {
   if (completed.length === 0) return;
 
   const section = document.createElement('div');
-  section.className = 'completed-section' + (completedObjectivesOpen ? ' open' : '');
+  const isOpen = completedObjectivesOpen || !!objectivesQuery || objectiveFiltersActive();
+  section.className = 'completed-section' + (isOpen ? ' open' : '');
 
   const header = document.createElement('div');
   header.className = 'completed-section-header';
-  header.innerHTML = `<span>Completed (${completed.length})</span><span class="completed-section-toggle">${completedObjectivesOpen ? '▾' : '▸'}</span>`;
+  header.innerHTML = `<span>Completed (${completed.length})</span><span class="completed-section-toggle">${isOpen ? '▾' : '▸'}</span>`;
   header.addEventListener('click', () => {
     completedObjectivesOpen = !completedObjectivesOpen;
     renderCompletedObjectivesSection(completed);
@@ -1903,18 +2273,43 @@ function toggleObjectiveTitleForm(titleWrap, objective) {
 
 // Expands an objective's card, scrolls it into view and briefly highlights
 // the given TO-DO inside it.
-function jumpToObjective(objectiveId, subtaskId) {
+// `itemSelector` picks the element inside the card to highlight (e.g. a TO-DO
+// or a question); without it the whole card is highlighted.
+function jumpToObjective(objectiveId, itemSelector) {
   const card = document.querySelector(`.objective-card[data-objective-id="${objectiveId}"]`);
   if (!card) return;
   openObjectiveIds.add(objectiveId);
   card.classList.add('open');
 
-  const target = (subtaskId && card.querySelector(`[data-subtask-id="${subtaskId}"]`)) || card;
+  const target = (itemSelector && card.querySelector(itemSelector)) || card;
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   target.classList.remove('jump-highlight');
   void target.offsetWidth; // restart the animation if it's already applied
   target.classList.add('jump-highlight');
   setTimeout(() => target.classList.remove('jump-highlight'), 2000);
+}
+
+// Switches to the Objectives tab from elsewhere (e.g. the Questions table) and
+// jumps to the objective, clearing any search/filter that would hide it.
+async function goToObjective(objectiveId, itemSelector) {
+  // Switch tabs directly rather than via a click, so only this load runs and
+  // the jump below can't be undone by a second, later re-render.
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.id === 'tab-objectives'));
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-objectives'));
+  await initObjectives();
+
+  const objective = lastObjectives.find((o) => o.id === objectiveId);
+  if (!objective) return;
+  if (!objectivePassesFilters(objective) || (objectivesQuery && !objectiveMatches(objective, objectivesQuery))) {
+    objectiveFilters.priority.clear();
+    objectiveFilters.status.clear();
+    objectivesQuery = '';
+    objectivesSearchInput.value = '';
+    renderObjectiveFilterChips();
+  }
+  if (objective.status === 'Done') completedObjectivesOpen = true;
+  renderObjectivesView(lastObjectives);
+  jumpToObjective(objectiveId, itemSelector);
 }
 
 function renderObjectiveCard(objective) {
@@ -2000,6 +2395,8 @@ function renderObjectiveCard(objective) {
   const summaryBits = [];
   if (openSubtasks > 0) summaryBits.push(`${openSubtasks} TO-DO${openSubtasks > 1 ? 's' : ''}`);
   if (openDecisions > 0) summaryBits.push(`${openDecisions} decision${openDecisions > 1 ? 's' : ''}`);
+  const openQuestions = (objective.questions || []).filter((q) => !q.resolved).length;
+  if (openQuestions > 0) summaryBits.push(`${openQuestions} question${openQuestions > 1 ? 's' : ''}`);
   if (summaryBits.length > 0) {
     const summary = document.createElement('span');
     summary.className = 'objective-summary' + (dueTodayCount > 0 ? ' has-due-today' : '');
@@ -2014,7 +2411,7 @@ function renderObjectiveCard(objective) {
   deleteBtn.title = 'Delete objective';
   deleteBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!(await confirmDialog(`Delete objective "${objective.title}"? This will also remove its updates, decisions and TO-DOs.`))) return;
+    if (!(await confirmDialog(`Delete objective "${objective.title}"? This will also remove its updates, decisions, questions and TO-DOs.`))) return;
     await fetch(`/api/objectives/${objective.id}`, { method: 'DELETE' });
     loadObjectives();
   });
@@ -2025,7 +2422,8 @@ function renderObjectiveCard(objective) {
   const body = document.createElement('div');
   body.className = 'objective-body';
   body.appendChild(renderObjectiveUpdatesSection(objective));
-  body.appendChild(renderObjectiveDecisionsSection(objective));
+  body.appendChild(renderObjectiveItemsSection('decisions', objective));
+  body.appendChild(renderObjectiveItemsSection('questions', objective));
   body.appendChild(renderObjectiveSubtasksSection(objective));
   card.appendChild(body);
 
@@ -2101,31 +2499,35 @@ function renderObjectiveUpdatesSection(objective) {
   return section;
 }
 
-function renderObjectiveDecisionsSection(objective) {
+function renderObjectiveItemsSection(kindKey, objective) {
+  const kind = OBJECTIVE_ITEM_KINDS[kindKey];
+  const items = objective[kindKey] || [];
   const section = document.createElement('div');
   section.className = 'objective-subsection';
 
   const heading = document.createElement('h4');
-  heading.textContent = '🧭 Decisions made';
+  heading.textContent = kind.heading;
   section.appendChild(heading);
 
-  if (objective.decisions.length === 0) {
+  if (items.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = 'No decisions made yet.';
+    empty.textContent = kind.sectionEmpty;
     section.appendChild(empty);
   } else {
     const list = document.createElement('ul');
     list.className = 'objective-decisions-list';
-    objective.decisions.forEach((d) => {
+    items.forEach((d) => {
       const item = document.createElement('li');
       item.className = 'objective-decision-item' + (d.resolved ? ' resolved' : '');
+      item.dataset.itemKey = `${kindKey}-${d.id}`;
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.checked = !!d.resolved;
+      checkbox.title = `Mark as ${kind.resolvedLabel.toLowerCase()}`;
       checkbox.addEventListener('change', async () => {
-        await fetch(`/api/objective-decisions/${d.id}`, {
+        await fetch(`/api/${kind.route}/${d.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resolved: checkbox.checked }),
@@ -2142,9 +2544,9 @@ function renderObjectiveDecisionsSection(objective) {
       const del = document.createElement('button');
       del.className = 'btn-delete';
       del.textContent = '×';
-      del.title = 'Delete decision';
+      del.title = `Delete ${kind.noun}`;
       del.addEventListener('click', async () => {
-        await fetch(`/api/objective-decisions/${d.id}`, { method: 'DELETE' });
+        await fetch(`/api/${kind.route}/${d.id}`, { method: 'DELETE' });
         loadObjectives();
       });
       item.appendChild(del);
@@ -2157,7 +2559,7 @@ function renderObjectiveDecisionsSection(objective) {
   const form = document.createElement('form');
   form.className = 'add-objective-decision-form';
   form.innerHTML = `
-    <input type="text" placeholder="A decision that was made..." required />
+    <input type="text" placeholder="${escapeAttr(kind.placeholder)}" required />
     <button type="submit">Add</button>
   `;
   form.addEventListener('submit', async (e) => {
@@ -2165,7 +2567,7 @@ function renderObjectiveDecisionsSection(objective) {
     const input = form.querySelector('input');
     const text = input.value.trim();
     if (!text) return;
-    await fetch(`/api/objectives/${objective.id}/decisions`, {
+    await fetch(`/api/objectives/${objective.id}/${kindKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
@@ -2305,18 +2707,168 @@ function renderObjectiveSubtasksSection(objective) {
   return section;
 }
 
-document.getElementById('add-objective-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const input = document.getElementById('objective-title');
-  const title = input.value.trim();
-  if (!title) return;
-  await fetch('/api/objectives', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title }),
+// ---------- New objective popup ----------
+
+const objectiveModal = document.getElementById('objective-modal');
+const objectiveModalForm = document.getElementById('objective-modal-form');
+const objectiveModalError = document.getElementById('objective-modal-error');
+
+const MODAL_ROW_PLACEHOLDERS = {
+  decisions: 'A decision that was made...',
+  questions: 'A question that needs an answer...',
+  subtasks: 'A step to complete...',
+};
+
+function addObjectiveModalRow(listKey) {
+  const list = objectiveModalForm.querySelector(`[data-list="${listKey}"]`);
+  const row = document.createElement('div');
+  row.className = 'modal-list-row';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'modal-row-text';
+  input.placeholder = MODAL_ROW_PLACEHOLDERS[listKey];
+  // Enter in a row adds another row rather than submitting the whole form.
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (input.value.trim()) addObjectiveModalRow(listKey);
+    }
   });
-  input.value = '';
-  loadObjectives();
+  row.appendChild(input);
+
+  if (listKey === 'subtasks') {
+    const due = document.createElement('input');
+    due.type = 'date';
+    due.className = 'modal-row-date';
+    due.value = todayKey();
+    due.title = 'Complete by';
+    row.appendChild(due);
+  }
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn-delete';
+  remove.textContent = '×';
+  remove.title = 'Remove';
+  remove.addEventListener('click', () => row.remove());
+  row.appendChild(remove);
+
+  list.appendChild(row);
+  input.focus();
+}
+
+objectiveModalForm.querySelectorAll('[data-add]').forEach((btn) => {
+  btn.addEventListener('click', () => addObjectiveModalRow(btn.dataset.add));
+});
+
+function rowTexts(listKey) {
+  return [...objectiveModalForm.querySelectorAll(`[data-list="${listKey}"] .modal-row-text`)]
+    .map((i) => i.value.trim())
+    .filter(Boolean);
+}
+
+function objectiveModalIsDirty() {
+  const f = objectiveModalForm.elements;
+  return !!(f.title.value.trim() || f.update.value.trim() ||
+    ['decisions', 'questions', 'subtasks'].some((k) => rowTexts(k).length > 0));
+}
+
+function fillSelect(select, values, selected) {
+  select.innerHTML = values
+    .map((v) => `<option value="${escapeAttr(v)}"${v === selected ? ' selected' : ''}>${escapeAttr(v)}</option>`)
+    .join('');
+}
+
+async function openObjectiveModal() {
+  if (objectivePriorities.length === 0) await initObjectives();
+  objectiveModalForm.reset();
+  objectiveModalForm.querySelectorAll('.modal-list').forEach((l) => (l.innerHTML = ''));
+  fillSelect(objectiveModalForm.elements.priority, objectivePriorities, 'Medium');
+  fillSelect(objectiveModalForm.elements.status, objectiveStatuses, 'To Do');
+  objectiveModalError.hidden = true;
+  objectiveModal.hidden = false;
+  objectiveModalForm.elements.title.focus();
+}
+
+async function closeObjectiveModal({ force = false } = {}) {
+  if (!force && objectiveModalIsDirty()) {
+    const discard = await confirmDialog('Discard this new objective? What you have typed will be lost.', {
+      title: 'Discard changes',
+      confirmLabel: 'Discard',
+    });
+    if (!discard) return;
+  }
+  objectiveModal.hidden = true;
+}
+
+document.getElementById('new-objective-btn').addEventListener('click', openObjectiveModal);
+objectiveModalForm.querySelectorAll('[data-modal-close]').forEach((btn) => {
+  btn.addEventListener('click', () => closeObjectiveModal());
+});
+objectiveModal.addEventListener('mousedown', (e) => {
+  if (e.target === objectiveModal) closeObjectiveModal();
+});
+document.addEventListener('keydown', (e) => {
+  // Leave Escape to the confirm dialog when it's open on top.
+  if (e.key === 'Escape' && !objectiveModal.hidden && confirmOverlay.hidden) closeObjectiveModal();
+});
+
+objectiveModalForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = objectiveModalForm.elements;
+  const title = f.title.value.trim();
+  if (!title) {
+    objectiveModalError.textContent = 'Please give the objective a title.';
+    objectiveModalError.hidden = false;
+    f.title.focus();
+    return;
+  }
+
+  const updateText = f.update.value.trim();
+  const subtasks = [...objectiveModalForm.querySelectorAll('[data-list="subtasks"] .modal-list-row')]
+    .map((row) => ({
+      text: row.querySelector('.modal-row-text').value.trim(),
+      due_date: row.querySelector('.modal-row-date').value,
+    }))
+    .filter((s) => s.text);
+  if (subtasks.some((s) => !s.due_date)) {
+    objectiveModalError.textContent = 'Every TO-DO needs a due date.';
+    objectiveModalError.hidden = false;
+    return;
+  }
+
+  const submitBtn = objectiveModalForm.querySelector('.modal-submit-btn');
+  submitBtn.disabled = true;
+  try {
+    const res = await fetch('/api/objectives', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title,
+        priority: f.priority.value,
+        status: f.status.value,
+        update: updateText ? { date: todayKey(), text: updateText } : null,
+        decisions: rowTexts('decisions'),
+        questions: rowTexts('questions'),
+        subtasks,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Could not create the objective.');
+    }
+    const created = await res.json();
+    openObjectiveIds.add(created.id);
+    await closeObjectiveModal({ force: true });
+    await loadObjectives();
+    jumpToObjective(created.id);
+  } catch (err) {
+    objectiveModalError.textContent = err.message;
+    objectiveModalError.hidden = false;
+  } finally {
+    submitBtn.disabled = false;
+  }
 });
 
 // ---------- Init ----------

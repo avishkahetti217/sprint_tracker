@@ -10,18 +10,29 @@
   <header>
     <h1>Work Tracker</h1>
     <div class="header-right">
-      <nav>
+      <nav class="top-nav">
         <button id="tab-today" class="tab active" data-tab="today">Today</button>
         <button id="tab-objectives" class="tab" data-tab="objectives">Objectives<span id="objectives-due-badge" class="tab-badge" hidden>0</span></button>
-        <button id="tab-decisions" class="tab" data-tab="decisions">Decisions</button>
-        <button id="tab-sprints" class="tab" data-tab="sprints">Sprints</button>
-        <button id="tab-stats" class="tab" data-tab="stats">Statistics</button>
-        <button id="tab-notes" class="tab" data-tab="notes">Notes</button>
-        <button id="tab-integrations" class="tab" data-tab="integrations">Integrations</button>
       </nav>
       <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle dark mode">🌙</button>
     </div>
   </header>
+
+  <div class="app-layout">
+  <aside class="side-nav" id="side-nav">
+    <button type="button" id="side-nav-toggle" class="side-nav-toggle" aria-expanded="true" title="Collapse sidebar">
+      <span class="side-nav-toggle-icon">«</span><span class="side-tab-label">Collapse</span>
+    </button>
+    <nav aria-label="More sections">
+      <button id="tab-decisions" class="tab side-tab" data-tab="decisions" title="Decisions"><span class="side-tab-icon">🧭</span><span class="side-tab-label">Decisions</span></button>
+      <button id="tab-questions" class="tab side-tab" data-tab="questions" title="Questions"><span class="side-tab-icon">❔</span><span class="side-tab-label">Questions</span></button>
+      <button id="tab-references" class="tab side-tab" data-tab="references" title="Reference"><span class="side-tab-icon">📎</span><span class="side-tab-label">Reference</span></button>
+      <button id="tab-sprints" class="tab side-tab" data-tab="sprints" title="Sprints"><span class="side-tab-icon">🏃</span><span class="side-tab-label">Sprints</span></button>
+      <button id="tab-stats" class="tab side-tab" data-tab="stats" title="Statistics"><span class="side-tab-icon">📊</span><span class="side-tab-label">Statistics</span></button>
+      <button id="tab-notes" class="tab side-tab" data-tab="notes" title="Notes"><span class="side-tab-icon">📝</span><span class="side-tab-label">Notes</span></button>
+      <button id="tab-integrations" class="tab side-tab" data-tab="integrations" title="Integrations"><span class="side-tab-icon">🔌</span><span class="side-tab-label">Integrations</span></button>
+    </nav>
+  </aside>
 
   <main>
     <section id="view-today" class="view active">
@@ -111,13 +122,55 @@
       <div id="decisions-table-wrap" class="decisions-table-wrap"></div>
     </section>
 
+    <section id="view-references" class="view">
+      <form id="add-reference-form" class="add-reference-form">
+        <input type="date" id="reference-date" required title="Day this link belongs to" />
+        <input type="text" inputmode="url" id="reference-url" placeholder="Paste a link or Jira ticket URL…" required />
+        <input type="text" id="reference-title" placeholder="Title (optional)" />
+        <button type="submit">Add</button>
+      </form>
+      <div id="reference-error" class="modal-error" hidden></div>
+
+      <div class="references-toolbar">
+        <div id="references-filter" class="objectives-filter-chips">
+          <button type="button" class="objectives-filter-chip active" data-filter="all">All</button>
+          <button type="button" class="objectives-filter-chip" data-filter="link">Links</button>
+          <button type="button" class="objectives-filter-chip" data-filter="jira">Jira</button>
+        </div>
+        <input type="search" id="references-search" class="references-search" placeholder="Search links…" autocomplete="off" />
+      </div>
+
+      <div id="references-list"></div>
+    </section>
+
+    <section id="view-questions" class="view">
+      <div id="questions-table-wrap" class="decisions-table-wrap"></div>
+    </section>
+
     <section id="view-objectives" class="view">
       <div id="objectives-due-today"></div>
 
-      <form id="add-objective-form" class="add-objective-form">
-        <input type="text" id="objective-title" placeholder="A goal you're chasing..." required />
-        <button type="submit">Add objective</button>
-      </form>
+      <div class="objectives-toolbar">
+        <button type="button" id="new-objective-btn" class="new-objective-btn">+ New objective</button>
+      </div>
+
+      <div class="objectives-search">
+        <span class="objectives-search-icon" aria-hidden="true">🔍</span>
+        <input type="search" id="objectives-search" placeholder="Search objectives, updates, decisions, questions, TO-DOs…" autocomplete="off" />
+        <span id="objectives-search-count" class="objectives-search-count"></span>
+      </div>
+
+      <div class="objectives-filters">
+        <div class="objectives-filter-group">
+          <span class="objectives-filter-label">Priority</span>
+          <div id="objectives-filter-priority" class="objectives-filter-chips"></div>
+        </div>
+        <div class="objectives-filter-group">
+          <span class="objectives-filter-label">Status</span>
+          <div id="objectives-filter-status" class="objectives-filter-chips"></div>
+        </div>
+        <button type="button" id="objectives-filter-clear" class="objectives-filter-clear" hidden>Clear filters</button>
+      </div>
 
       <div class="objectives-column-header">
         <span></span>
@@ -147,6 +200,7 @@
       </div>
     </section>
   </main>
+  </div>
 
   <div id="idle-overlay" class="idle-overlay" hidden>
     <div class="idle-card">
@@ -154,6 +208,63 @@
       <p>The tracker was paused after 2 minutes of inactivity.</p>
       <button type="button" id="idle-resume-btn" class="idle-resume-btn">Back to Today</button>
     </div>
+  </div>
+
+  <div id="objective-modal" class="modal-overlay" hidden>
+    <form id="objective-modal-form" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="objective-modal-title" novalidate>
+      <div class="modal-header">
+        <h3 id="objective-modal-title">New objective</h3>
+        <button type="button" class="modal-close" data-modal-close title="Close">×</button>
+      </div>
+
+      <div class="modal-body">
+        <label class="modal-field">
+          <span>Title <em>*</em></span>
+          <input type="text" name="title" placeholder="A goal you're chasing..." required />
+        </label>
+
+        <div class="modal-row">
+          <label class="modal-field">
+            <span>Priority</span>
+            <select name="priority"></select>
+          </label>
+          <label class="modal-field">
+            <span>Status</span>
+            <select name="status"></select>
+          </label>
+        </div>
+
+        <label class="modal-field">
+          <span>First update <small>(optional)</small></span>
+          <textarea name="update" rows="2" placeholder="Where things stand right now..."></textarea>
+        </label>
+
+        <div class="modal-field">
+          <span>🧭 Decisions made</span>
+          <div class="modal-list" data-list="decisions"></div>
+          <button type="button" class="modal-add-row" data-add="decisions">+ Add decision</button>
+        </div>
+
+        <div class="modal-field">
+          <span>❔ Questions</span>
+          <div class="modal-list" data-list="questions"></div>
+          <button type="button" class="modal-add-row" data-add="questions">+ Add question</button>
+        </div>
+
+        <div class="modal-field">
+          <span>✅ TO-DOs</span>
+          <div class="modal-list" data-list="subtasks"></div>
+          <button type="button" class="modal-add-row" data-add="subtasks">+ Add TO-DO</button>
+        </div>
+
+        <div id="objective-modal-error" class="modal-error" hidden></div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="confirm-cancel-btn" data-modal-close>Cancel</button>
+        <button type="submit" class="modal-submit-btn">Create objective</button>
+      </div>
+    </form>
   </div>
 
   <div id="confirm-overlay" class="confirm-overlay" hidden>

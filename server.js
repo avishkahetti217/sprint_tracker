@@ -449,6 +449,39 @@ app.get('/api/sprints/export', (req, res) => {
   res.send(csv);
 });
 
+// ---------- Reference links ----------
+
+app.get('/api/references', (req, res) => {
+  res.json(db.prepare('SELECT * FROM reference_links ORDER BY date DESC, id DESC').all());
+});
+
+app.post('/api/references', (req, res) => {
+  const date = req.body.date;
+  const url = String(req.body.url || '').trim();
+  const title = String(req.body.title || '').trim() || null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'invalid date' });
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return res.status(400).json({ error: 'Enter a full link, starting with https://' });
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return res.status(400).json({ error: 'Only http:// and https:// links are supported' });
+  }
+
+  const info = db
+    .prepare('INSERT INTO reference_links (date, title, url, created_at) VALUES (?, ?, ?, ?)')
+    .run(date, title, parsed.href, new Date().toISOString());
+  res.status(201).json(db.prepare('SELECT * FROM reference_links WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.delete('/api/references/:id', (req, res) => {
+  db.prepare('DELETE FROM reference_links WHERE id = ?').run(req.params.id);
+  res.status(204).end();
+});
+
 // ---------- Monthly notes ----------
 
 app.get('/api/note-categories', (req, res) => {
@@ -722,15 +755,6 @@ function objectiveUpdates(objectiveId) {
     .prepare('SELECT * FROM objective_updates WHERE objective_id = ? ORDER BY date DESC, id DESC')
     .all(objectiveId);
 }
-function decisionNextSteps(decisionId) {
-  return db.prepare('SELECT * FROM decision_next_steps WHERE decision_id = ? ORDER BY id').all(decisionId);
-}
-function objectiveDecisions(objectiveId) {
-  return db
-    .prepare('SELECT * FROM objective_decisions WHERE objective_id = ? ORDER BY id')
-    .all(objectiveId)
-    .map((d) => ({ ...d, next_steps: decisionNextSteps(d.id) }));
-}
 function objectiveSubtasks(objectiveId) {
   return db
     .prepare('SELECT * FROM objective_subtasks WHERE objective_id = ? ORDER BY due_date, id')
@@ -750,28 +774,73 @@ app.get('/api/objectives', (req, res) => {
   const result = objectives.map((o) => ({
     ...o,
     updates: objectiveUpdates(o.id),
-    decisions: objectiveDecisions(o.id),
+    decisions: objectiveItems(OBJECTIVE_ITEM_KINDS[0], o.id),
+    questions: objectiveItems(OBJECTIVE_ITEM_KINDS[1], o.id),
     subtasks: objectiveSubtasks(o.id),
   }));
   res.json(result);
 });
 
+// Creates an objective, optionally with its first update, decisions, questions
+// and TO-DOs, all in one transaction so a bad field never leaves a half-made objective.
 app.post('/api/objectives', (req, res) => {
   const title = (req.body.title || '').trim();
   if (!title) return res.status(400).json({ error: 'title is required' });
 
   const priority = req.body.priority !== undefined ? req.body.priority : 'Medium';
   if (!OBJECTIVE_PRIORITIES.includes(priority)) return res.status(400).json({ error: 'invalid priority' });
+  const status = req.body.status !== undefined ? req.body.status : 'To Do';
+  if (!OBJECTIVE_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid status' });
 
-  const info = db
-    .prepare("INSERT INTO objectives (title, status, priority, created_at) VALUES (?, 'To Do', ?, ?)")
-    .run(title, priority, new Date().toISOString());
+  const texts = (list) =>
+    (Array.isArray(list) ? list : []).map((t) => String(t || '').trim()).filter(Boolean);
+  const decisions = texts(req.body.decisions);
+  const questions = texts(req.body.questions);
+
+  const update = req.body.update ? String(req.body.update.text || '').trim() : '';
+  const updateDate = req.body.update ? req.body.update.date : null;
+  if (update && !/^\d{4}-\d{2}-\d{2}$/.test(updateDate || '')) {
+    return res.status(400).json({ error: 'invalid update date' });
+  }
+
+  const subtasks = (Array.isArray(req.body.subtasks) ? req.body.subtasks : [])
+    .map((s) => ({ text: String((s && s.text) || '').trim(), due_date: s && s.due_date }))
+    .filter((s) => s.text);
+  if (subtasks.some((s) => !/^\d{4}-\d{2}-\d{2}$/.test(s.due_date || ''))) {
+    return res.status(400).json({ error: 'every TO-DO needs a due date' });
+  }
+
+  const now = new Date().toISOString();
+  const objectiveId = db.transaction(() => {
+    const id = db
+      .prepare('INSERT INTO objectives (title, status, priority, created_at) VALUES (?, ?, ?, ?)')
+      .run(title, status, priority, now).lastInsertRowid;
+    if (update) {
+      db.prepare('INSERT INTO objective_updates (objective_id, date, text, created_at) VALUES (?, ?, ?, ?)').run(
+        id,
+        updateDate,
+        update,
+        now
+      );
+    }
+    const insertItem = (table, text) =>
+      db.prepare(`INSERT INTO ${table} (objective_id, text, resolved, created_at) VALUES (?, ?, 0, ?)`).run(id, text, now);
+    decisions.forEach((t) => insertItem('objective_decisions', t));
+    questions.forEach((t) => insertItem('objective_questions', t));
+    subtasks.forEach((s) =>
+      db
+        .prepare('INSERT INTO objective_subtasks (objective_id, text, due_date, done, created_at) VALUES (?, ?, ?, 0, ?)')
+        .run(id, s.text, s.due_date, now)
+    );
+    return id;
+  })();
 
   res.status(201).json({
-    ...db.prepare('SELECT * FROM objectives WHERE id = ?').get(info.lastInsertRowid),
-    updates: [],
-    decisions: [],
-    subtasks: [],
+    ...db.prepare('SELECT * FROM objectives WHERE id = ?').get(objectiveId),
+    updates: objectiveUpdates(objectiveId),
+    decisions: objectiveItems(OBJECTIVE_ITEM_KINDS[0], objectiveId),
+    questions: objectiveItems(OBJECTIVE_ITEM_KINDS[1], objectiveId),
+    subtasks: objectiveSubtasks(objectiveId),
   });
 });
 
@@ -798,10 +867,7 @@ app.patch('/api/objectives/:id', (req, res) => {
 app.delete('/api/objectives/:id', (req, res) => {
   const id = req.params.id;
   db.prepare('DELETE FROM objective_updates WHERE objective_id = ?').run(id);
-  db.prepare(
-    'DELETE FROM decision_next_steps WHERE decision_id IN (SELECT id FROM objective_decisions WHERE objective_id = ?)'
-  ).run(id);
-  db.prepare('DELETE FROM objective_decisions WHERE objective_id = ?').run(id);
+  deleteObjectiveItems(id);
   db.prepare('DELETE FROM objective_subtasks WHERE objective_id = ?').run(id);
   db.prepare('DELETE FROM objectives WHERE id = ?').run(id);
   res.status(204).end();
@@ -829,66 +895,107 @@ app.delete('/api/objective-updates/:id', (req, res) => {
   res.status(204).end();
 });
 
-// Pending decisions.
-app.post('/api/objectives/:id/decisions', (req, res) => {
-  const objective = db.prepare('SELECT * FROM objectives WHERE id = ?').get(req.params.id);
-  if (!objective) return res.status(404).json({ error: 'not found' });
+// Decisions and questions: both are a resolvable item on an objective with a
+// checklist of next steps, so they share one set of routes.
+const OBJECTIVE_ITEM_KINDS = [
+  {
+    collection: 'decisions', // POST /api/objectives/:id/decisions
+    route: 'objective-decisions',
+    table: 'objective_decisions',
+    stepsRoute: 'decision-next-steps',
+    stepsTable: 'decision_next_steps',
+    stepsFk: 'decision_id',
+  },
+  {
+    collection: 'questions',
+    route: 'objective-questions',
+    table: 'objective_questions',
+    stepsRoute: 'question-next-steps',
+    stepsTable: 'question_next_steps',
+    stepsFk: 'question_id',
+  },
+];
 
-  const text = (req.body.text || '').trim();
-  if (!text) return res.status(400).json({ error: 'text is required' });
+function objectiveItems(kind, objectiveId) {
+  return db
+    .prepare(`SELECT * FROM ${kind.table} WHERE objective_id = ? ORDER BY id`)
+    .all(objectiveId)
+    .map((item) => ({
+      ...item,
+      next_steps: db.prepare(`SELECT * FROM ${kind.stepsTable} WHERE ${kind.stepsFk} = ? ORDER BY id`).all(item.id),
+    }));
+}
 
-  const info = db
-    .prepare('INSERT INTO objective_decisions (objective_id, text, resolved, created_at) VALUES (?, ?, 0, ?)')
-    .run(objective.id, text, new Date().toISOString());
+function deleteObjectiveItems(objectiveId) {
+  OBJECTIVE_ITEM_KINDS.forEach((kind) => {
+    db.prepare(
+      `DELETE FROM ${kind.stepsTable} WHERE ${kind.stepsFk} IN (SELECT id FROM ${kind.table} WHERE objective_id = ?)`
+    ).run(objectiveId);
+    db.prepare(`DELETE FROM ${kind.table} WHERE objective_id = ?`).run(objectiveId);
+  });
+}
 
-  res.status(201).json(db.prepare('SELECT * FROM objective_decisions WHERE id = ?').get(info.lastInsertRowid));
-});
+OBJECTIVE_ITEM_KINDS.forEach((kind) => {
+  app.post(`/api/objectives/:id/${kind.collection}`, (req, res) => {
+    const objective = db.prepare('SELECT * FROM objectives WHERE id = ?').get(req.params.id);
+    if (!objective) return res.status(404).json({ error: 'not found' });
 
-app.patch('/api/objective-decisions/:id', (req, res) => {
-  const decision = db.prepare('SELECT * FROM objective_decisions WHERE id = ?').get(req.params.id);
-  if (!decision) return res.status(404).json({ error: 'not found' });
+    const text = (req.body.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'text is required' });
 
-  const resolved = req.body.resolved !== undefined ? (req.body.resolved ? 1 : 0) : decision.resolved;
-  db.prepare('UPDATE objective_decisions SET resolved = ? WHERE id = ?').run(resolved, decision.id);
-  res.json(db.prepare('SELECT * FROM objective_decisions WHERE id = ?').get(decision.id));
-});
+    const info = db
+      .prepare(`INSERT INTO ${kind.table} (objective_id, text, resolved, created_at) VALUES (?, ?, 0, ?)`)
+      .run(objective.id, text, new Date().toISOString());
 
-app.delete('/api/objective-decisions/:id', (req, res) => {
-  db.prepare('DELETE FROM decision_next_steps WHERE decision_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM objective_decisions WHERE id = ?').run(req.params.id);
-  res.status(204).end();
-});
+    res.status(201).json(db.prepare(`SELECT * FROM ${kind.table} WHERE id = ?`).get(info.lastInsertRowid));
+  });
 
-// Next steps that follow on from a decision.
-app.post('/api/objective-decisions/:id/next-steps', (req, res) => {
-  const decision = db.prepare('SELECT * FROM objective_decisions WHERE id = ?').get(req.params.id);
-  if (!decision) return res.status(404).json({ error: 'not found' });
+  app.patch(`/api/${kind.route}/:id`, (req, res) => {
+    const item = db.prepare(`SELECT * FROM ${kind.table} WHERE id = ?`).get(req.params.id);
+    if (!item) return res.status(404).json({ error: 'not found' });
 
-  const text = (req.body.text || '').trim();
-  if (!text) return res.status(400).json({ error: 'text is required' });
+    const resolved = req.body.resolved !== undefined ? (req.body.resolved ? 1 : 0) : item.resolved;
+    db.prepare(`UPDATE ${kind.table} SET resolved = ? WHERE id = ?`).run(resolved, item.id);
+    res.json(db.prepare(`SELECT * FROM ${kind.table} WHERE id = ?`).get(item.id));
+  });
 
-  const info = db
-    .prepare('INSERT INTO decision_next_steps (decision_id, text, done, created_at) VALUES (?, ?, 0, ?)')
-    .run(decision.id, text, new Date().toISOString());
+  app.delete(`/api/${kind.route}/:id`, (req, res) => {
+    db.prepare(`DELETE FROM ${kind.stepsTable} WHERE ${kind.stepsFk} = ?`).run(req.params.id);
+    db.prepare(`DELETE FROM ${kind.table} WHERE id = ?`).run(req.params.id);
+    res.status(204).end();
+  });
 
-  res.status(201).json(db.prepare('SELECT * FROM decision_next_steps WHERE id = ?').get(info.lastInsertRowid));
-});
+  // Next steps that follow on from a decision / question.
+  app.post(`/api/${kind.route}/:id/next-steps`, (req, res) => {
+    const item = db.prepare(`SELECT * FROM ${kind.table} WHERE id = ?`).get(req.params.id);
+    if (!item) return res.status(404).json({ error: 'not found' });
 
-app.patch('/api/decision-next-steps/:id', (req, res) => {
-  const step = db.prepare('SELECT * FROM decision_next_steps WHERE id = ?').get(req.params.id);
-  if (!step) return res.status(404).json({ error: 'not found' });
+    const text = (req.body.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'text is required' });
 
-  const text = req.body.text !== undefined ? String(req.body.text).trim() : step.text;
-  if (!text) return res.status(400).json({ error: 'text is required' });
-  const done = req.body.done !== undefined ? (req.body.done ? 1 : 0) : step.done;
+    const info = db
+      .prepare(`INSERT INTO ${kind.stepsTable} (${kind.stepsFk}, text, done, created_at) VALUES (?, ?, 0, ?)`)
+      .run(item.id, text, new Date().toISOString());
 
-  db.prepare('UPDATE decision_next_steps SET text = ?, done = ? WHERE id = ?').run(text, done, step.id);
-  res.json(db.prepare('SELECT * FROM decision_next_steps WHERE id = ?').get(step.id));
-});
+    res.status(201).json(db.prepare(`SELECT * FROM ${kind.stepsTable} WHERE id = ?`).get(info.lastInsertRowid));
+  });
 
-app.delete('/api/decision-next-steps/:id', (req, res) => {
-  db.prepare('DELETE FROM decision_next_steps WHERE id = ?').run(req.params.id);
-  res.status(204).end();
+  app.patch(`/api/${kind.stepsRoute}/:id`, (req, res) => {
+    const step = db.prepare(`SELECT * FROM ${kind.stepsTable} WHERE id = ?`).get(req.params.id);
+    if (!step) return res.status(404).json({ error: 'not found' });
+
+    const text = req.body.text !== undefined ? String(req.body.text).trim() : step.text;
+    if (!text) return res.status(400).json({ error: 'text is required' });
+    const done = req.body.done !== undefined ? (req.body.done ? 1 : 0) : step.done;
+
+    db.prepare(`UPDATE ${kind.stepsTable} SET text = ?, done = ? WHERE id = ?`).run(text, done, step.id);
+    res.json(db.prepare(`SELECT * FROM ${kind.stepsTable} WHERE id = ?`).get(step.id));
+  });
+
+  app.delete(`/api/${kind.stepsRoute}/:id`, (req, res) => {
+    db.prepare(`DELETE FROM ${kind.stepsTable} WHERE id = ?`).run(req.params.id);
+    res.status(204).end();
+  });
 });
 
 // Sub-tasks with a "complete by" due date.
